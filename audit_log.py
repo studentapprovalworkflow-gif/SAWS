@@ -5,7 +5,7 @@ Append-only log of security-relevant actions. Direct port of AuditLog.gs.
 from datetime import datetime, timezone
 
 import config
-from db_utils import append_row_, read_sheet_as_objects_
+from db_utils import append_row_, invalidate_cache_, read_sheet_as_objects_
 
 
 def log_audit_(user_email, action, details, branch, browser):
@@ -17,6 +17,16 @@ def log_audit_(user_email, action, details, branch, browser):
         'Branch': branch or '',
         'Browser': browser or '',
     })
+    branch_name = str(branch or '').strip()
+    normalized_branch = ' '.join(
+        branch_name.replace('_', ' ').replace('-', ' ').upper().split()
+    )
+    if (
+        str(action or '').strip().upper() in {'CREATE', 'UPDATE', 'STAGE_TRANSITION'}
+        and branch_name
+        and normalized_branch != 'HEAD OFFICE'
+    ):
+        invalidate_cache_(['dashboard_ALL', 'dashboard_' + branch_name])
 
 
 def get_audit_logs_(branch_filter):

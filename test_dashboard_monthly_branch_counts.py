@@ -36,6 +36,24 @@ class DashboardMonthlyBranchCountTests(unittest.TestCase):
                 {'Branch': 'BETA', 'Status': config.STATUS_TRANSFER_PENDING_HEAD_OFFICE, 'Entry Date': '2026-11-14'},
             ],
             config.SHEET_TRANSFER_COMPLETED: [],
+            config.SHEET_AUDITLOGS: [
+                {'Timestamp': '2026-11-14T06:00:00+00:00', 'Branch': 'ALPHA',
+                 'Action': 'CREATE', 'User Email': 'scm@alpha.test', 'Details': 'Submitted student A-1'},
+                {'Timestamp': '2026-11-14T06:20:00+00:00', 'Branch': 'ALPHA',
+                 'Action': 'UPDATE', 'User Email': 'hof@alpha.test', 'Details': 'Updated reason for A-1'},
+                {'Timestamp': '2026-11-14T07:00:00+00:00', 'Branch': 'BETA',
+                 'Action': 'STAGE_TRANSITION', 'User Email': 'admin@test', 'Details': 'B-1 approved'},
+                {'Timestamp': '2026-11-14T18:45:00+00:00', 'Branch': 'BETA',
+                 'Action': 'UPDATE', 'User Email': 'scm@beta.test', 'Details': 'After midnight IST'},
+                {'Timestamp': '2026-11-14T06:30:00+00:00', 'Branch': 'ALPHA',
+                 'Action': 'LOGIN', 'User Email': 'scm@alpha.test', 'Details': 'User signed in'},
+                {'Timestamp': '2026-11-14T06:30:00+00:00', 'Branch': 'ALPHA',
+                 'Action': 'DELETE', 'User Email': 'admin@test', 'Details': 'Deleted item'},
+                {'Timestamp': '2026-11-14T06:30:00+00:00', 'Branch': 'HEAD OFFICE',
+                 'Action': 'CREATE', 'User Email': 'admin@test', 'Details': 'Created user'},
+                {'Timestamp': '2026-11-14T06:30:00+00:00', 'Branch': 'Unknown',
+                 'Action': 'CREATE', 'User Email': 'admin@test', 'Details': 'Missing branch'},
+            ],
         }
 
     def _get_dashboard(self, user, params=None):
@@ -68,16 +86,18 @@ class DashboardMonthlyBranchCountTests(unittest.TestCase):
         self.assertEqual(
             result['charts']['dailyBranchCount'],
             [
-                {'branch': 'ALPHA', 'count': 1},
+                {'branch': 'ALPHA', 'count': 2},
                 {'branch': 'BETA', 'count': 1},
             ],
         )
-
     def test_branch_user_only_sees_their_own_branch_count(self):
         result = self._get_dashboard({'role': config.ROLE_SCM, 'branch': 'ALPHA'})
 
         self.assertEqual(result['charts']['monthlyBranchCount'], [{'branch': 'ALPHA', 'count': 4}])
-        self.assertEqual(result['charts']['dailyBranchCount'], [{'branch': 'ALPHA', 'count': 1}])
+        self.assertEqual(
+            [(entry['branch'], entry['count']) for entry in result['charts']['dailyBranchCount']],
+            [('ALPHA', 2)],
+        )
 
     def test_global_branch_filter_and_workflow_filter_are_applied(self):
         result = self._get_dashboard(
@@ -86,7 +106,10 @@ class DashboardMonthlyBranchCountTests(unittest.TestCase):
         )
 
         self.assertEqual(result['charts']['monthlyBranchCount'], [{'branch': 'BETA', 'count': 2}])
-        self.assertEqual(result['charts']['dailyBranchCount'], [])
+        self.assertEqual(
+            [(entry['branch'], entry['count']) for entry in result['charts']['dailyBranchCount']],
+            [('BETA', 1)],
+        )
 
     def test_branch_workflow_counts_include_all_active_and_approved_records(self):
         self.sheets[config.SHEET_INACTIVE_COMPLETED].append({
@@ -114,8 +137,8 @@ class DashboardMonthlyBranchCountTests(unittest.TestCase):
             'active': 0, 'approved': 0, 'total': 0,
         })
         self.assertEqual(
-            result['charts']['dailyBranchCount'],
-            [{'branch': 'BETA', 'count': 2}, {'branch': 'ALPHA', 'count': 1}],
+            [(entry['branch'], entry['count']) for entry in result['charts']['dailyBranchCount']],
+            [('ALPHA', 2), ('BETA', 1)],
         )
 
 

@@ -1093,19 +1093,25 @@ export default function Overview() {
             <div className="bg-white rounded-lg border border-ink-100 shadow-panel p-5 flex flex-col">
               <h3 className="text-sm font-medium mb-3 shrink-0">Today&rsquo;s Branch Activity</h3>
               <div className="flex-1 min-h-[220px]">
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={data.charts.dailyBranchCount} margin={{ bottom: 8 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                    <XAxis dataKey="branch" tick={{ fontSize: 10 }} interval={0} angle={-30} textAnchor="end" height={60} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
-                    <Tooltip formatter={(value: number) => [value, 'Logs']} />
-                    <Bar dataKey="count" name="Logs" radius={[4, 4, 0, 0]}>
-                      {data.charts.dailyBranchCount.map((entry, index) => (
-                        <Cell key={entry.branch} fill={shadeForRank(index)} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                {data.charts.dailyBranchCount.length ? (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={data.charts.dailyBranchCount} margin={{ bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                      <XAxis dataKey="branch" tick={{ fontSize: 10 }} interval={0} angle={-30} textAnchor="end" height={60} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                      <Tooltip formatter={(value: number) => [value, 'Activities']} />
+                      <Bar dataKey="count" name="Activities" radius={[4, 4, 0, 0]}>
+                        {data.charts.dailyBranchCount.map((entry, index) => (
+                          <Cell key={entry.branch} fill={shadeForRank(index)} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex h-[260px] items-center justify-center text-sm text-ink-700/50">
+                    No branch activity today
+                  </div>
+                )}
               </div>
             </div>
 

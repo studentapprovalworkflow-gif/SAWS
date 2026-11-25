@@ -1,6 +1,7 @@
 """Dashboard aggregation for all three SDMS workflows."""
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import config
 from auth import ApiError, require_role_
@@ -15,6 +16,18 @@ def _parse_dt(value):
         return datetime.fromisoformat(str(value)[:19])
     except Exception:
         return None
+
+
+def _parse_audit_dt(value, local_timezone):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(local_timezone)
 
 
 def _in_date_range(row, date_from=None, date_to=None):
@@ -168,7 +181,6 @@ def get_dashboard_data_(user, params=None):
 
         monthly_trend = build_date_trend_(all_rows, 'Entry Date', 12, 'month')
         monthly_branch_counts = defaultdict(int)
-        daily_branch_counts = defaultdict(int)
         for name in selected_workflows:
             active, completed, _ = sources[name]
             for row in active + completed:
@@ -180,10 +192,28 @@ def get_dashboard_data_(user, params=None):
                 entry_date = _parse_dt(row.get('Entry Date'))
                 if not entry_date:
                     continue
-                if (entry_date.year, entry_date.month, entry_date.day) == (today.year, today.month, today.day):
-                    daily_branch_counts[branch] += 1
                 if (entry_date.year, entry_date.month) == (today.year, today.month):
                     monthly_branch_counts[branch] += 1
+
+        local_timezone = ZoneInfo(config.BACKUP_TIMEZONE)
+        today_local = datetime.now(local_timezone).date()
+        daily_branch_counts = defaultdict(int)
+        tracked_actions = {'CREATE', 'UPDATE', 'STAGE_TRANSITION'}
+        for log in read_sheet_as_objects_(config.SHEET_AUDITLOGS):
+            action = str(log.get('Action') or '').strip().upper()
+            branch = str(log.get('Branch') or '').strip()
+            if action not in tracked_actions or not branch:
+                continue
+            branch_key = ' '.join(branch.replace('_', ' ').replace('-', ' ').upper().split())
+            if branch_key in {'HEAD OFFICE', 'UNKNOWN'}:
+                continue
+            if requested_branch and branch.casefold() != requested_branch.casefold():
+                continue
+
+            activity_time = _parse_audit_dt(log.get('Timestamp'), local_timezone)
+            if not activity_time or activity_time.date() != today_local:
+                continue
+            daily_branch_counts[branch] += 1
 
         branch_workflow_counts = defaultdict(
             lambda: defaultdict(lambda: {'active': 0, 'approved': 0, 'total': 0})
@@ -219,7 +249,7 @@ def get_dashboard_data_(user, params=None):
         daily_branch_count = [
             {'branch': branch, 'count': count}
             for branch, count in sorted(
-                ((branch, count) for branch, count in daily_branch_counts.items() if count > 0),
+                daily_branch_counts.items(),
                 key=lambda item: (-item[1], item[0]),
             )
         ]
