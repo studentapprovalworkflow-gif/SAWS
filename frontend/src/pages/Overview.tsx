@@ -47,6 +47,7 @@ import {
   type ReasonScreenshot
 } from '@/lib/apiClient';
 import { readOverviewFilters, writeOverviewFilters } from '@/lib/sessionState';
+import { sortBranchNames } from '@/lib/branchOrder';
 import { useAuth } from '@/context/AuthContext';
 import GlobalMidSearch from '@/components/GlobalMidSearch';
 import type { DashboardData, DashboardWorkflow } from '@/types';
@@ -509,7 +510,7 @@ export default function Overview() {
     (!selectedWorkflows.length || selectedWorkflows.includes(row.workflow)) &&
     (!selectedStatuses.length || selectedStatuses.includes(row.currentStatus))
   );
-  const branchOptions = [...new Set(dashboardRows.map((row) => row.branch))];
+  const branchOptions = sortBranchNames([...new Set(dashboardRows.map((row) => row.branch))]);
   const workflowOptions = [...new Set(dashboardRows.map((row) => row.workflow))];
   const statusOptions = [...new Set(dashboardRows.map((row) => row.currentStatus))];
   const branchCounts = dashboardRows.reduce<Record<string, number>>((counts, row) => {
@@ -947,7 +948,7 @@ export default function Overview() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
             <div className="bg-white rounded-lg border border-ink-100 shadow-panel p-5 flex flex-col min-w-0 lg:col-span-2">
               <h3 className="text-sm font-medium mb-3 shrink-0">Total records by branch and workflow</h3>
-              <div className="branch-workflow-scroll relative max-h-[288px] overflow-y-auto overflow-x-auto bg-white">
+              <div className="branch-workflow-scroll relative max-h-[448px] overflow-y-auto overflow-x-auto bg-white">
                 <table className="branch-workflow-table w-full min-w-[620px] border-separate border-spacing-0 text-xs text-right">
                   <thead className="sticky top-0 z-30 bg-white">
                     <tr className="bg-white">

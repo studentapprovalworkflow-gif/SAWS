@@ -111,6 +111,25 @@ class DashboardMonthlyBranchCountTests(unittest.TestCase):
             [('BETA', 1)],
         )
 
+    def test_branch_workflow_table_uses_the_requested_order(self):
+        self.sheets[config.SHEET_RESPONSE] = [
+            {'Branch': 'KOTTAYAM', 'Status': config.STATUS_PENDING_HOF_MANAGER},
+            {'Branch': 'KOZHIKODE', 'Status': config.STATUS_PENDING_HOF_MANAGER},
+            {'Branch': 'MANJERI', 'Status': config.STATUS_PENDING_HOF_MANAGER},
+            {'Branch': 'KASARGOD', 'Status': config.STATUS_PENDING_HOF_MANAGER},
+        ]
+        self.sheets[config.SHEET_COMPLETED] = []
+
+        result = self._get_dashboard(
+            {'role': config.ROLE_ADMIN, 'branch': ''},
+            {'workflow': 'Discontinue'},
+        )
+
+        self.assertEqual(
+            [entry['branch'] for entry in result['charts']['branchWorkflowCount'][:4]],
+            ['MANJERI', 'KASARGOD', 'KOZHIKODE', 'KOTTAYAM'],
+        )
+
     def test_branch_workflow_counts_include_all_active_and_approved_records(self):
         self.sheets[config.SHEET_INACTIVE_COMPLETED].append({
             'Branch': 'BETA',

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { compareBranchNames } from '@/lib/branchOrder';
 import type {
   ApiEnvelope,
   AuthUser,
@@ -271,7 +272,8 @@ export async function exportStudents(sheet: 'response' | 'completed', params: St
 }
 
 export async function listBranches() {
-  return callApi<string[]>('branches.list');
+  const branches = await callApi<string[]>('branches.list');
+  return branches.sort(compareBranchNames);
 }
 
 /**
@@ -300,7 +302,8 @@ export async function runBackupNow() {
 
 /** Includes soft-deleted branches, for the management screen. */
 export async function listAllBranches() {
-  return callApi<Branch[]>('branches.listAll');
+  const branches = await callApi<Branch[]>('branches.listAll');
+  return branches.sort((a, b) => compareBranchNames(a.name, b.name));
 }
 
 /**

@@ -13,6 +13,21 @@ from db_utils import read_sheet_as_objects_, append_row_, update_row_fields_, no
 from auth import ApiError
 from audit_log import log_audit_
 
+BRANCH_DISPLAY_ORDER = (
+    'MANJERI', 'KASARGODE', 'KANNUR', 'KUTTIYADI', 'CALICUT', 'TIRUR',
+    'PALAKAD', 'THRISSUR', 'ERNAKULAM', 'ALAPPUZHA', 'KOTTAYAM', 'KOLLAM',
+    'ATTINGAL', 'MARTHANDAM', 'NAGPUR', 'HYDERABAD', 'BANGALORE',
+)
+BRANCH_DISPLAY_ALIASES = {
+    'KASARGOD': 'KASARGODE',
+    'KUTTYADI': 'KUTTIYADI',
+    'KOZHIKODE': 'CALICUT',
+    'PALAKKAD': 'PALAKAD',
+    'ERANAKULAM': 'ERNAKULAM',
+    'TRIVANDRUM': 'ATTINGAL',
+}
+_BRANCH_DISPLAY_RANK = {name: index for index, name in enumerate(BRANCH_DISPLAY_ORDER)}
+
 
 def is_branch_active_(row):
     """
@@ -28,6 +43,16 @@ def normalize_branch_name_(name):
     return str(name or '').strip().upper()
 
 
+def branch_sort_key_(name):
+    normalized = normalize_branch_name_(name)
+    canonical = BRANCH_DISPLAY_ALIASES.get(normalized, normalized)
+    return (_BRANCH_DISPLAY_RANK.get(canonical, len(BRANCH_DISPLAY_ORDER)), normalized)
+
+
+def sort_branch_names_(names):
+    return sorted(names, key=branch_sort_key_)
+
+
 def list_branches_(include_inactive):
     """
     include_inactive=False (default): what every normal dropdown/
@@ -36,7 +61,8 @@ def list_branches_(include_inactive):
     """
     rows = read_sheet_as_objects_(config.SHEET_BRANCHES)
     filtered = rows if include_inactive else [r for r in rows if is_branch_active_(r)]
-    return [{'name': r.get('Branch Name'), 'active': is_branch_active_(r)} for r in filtered]
+    branches = [{'name': r.get('Branch Name'), 'active': is_branch_active_(r)} for r in filtered]
+    return sorted(branches, key=lambda branch: branch_sort_key_(branch['name']))
 
 
 def create_branch_(acting_user, payload):

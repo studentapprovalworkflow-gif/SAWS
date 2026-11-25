@@ -31,6 +31,7 @@ import {
   type BulkImportResult,
   type GlobalMidSearchResult
 } from '@/lib/apiClient';
+import { sortBranchNames } from '@/lib/branchOrder';
 import { useBulkTasks } from '@/context/BulkTaskContext';
 import { useAuth } from '@/context/AuthContext';
 import { INACTIVE_STATUS_LABELS, STATUS_LABELS, TRANSFER_STATUS_LABELS } from '@/types';
@@ -291,7 +292,7 @@ export default function Data() {
     enabled: user?.role === 'Admin'
   });
   const branchNames = useMemo(
-    () => (branchesQuery.data || []).map((b) => b.name).sort((a, b) => a.localeCompare(b)),
+    () => sortBranchNames((branchesQuery.data || []).map((b) => b.name)),
     [branchesQuery.data]
   );
 

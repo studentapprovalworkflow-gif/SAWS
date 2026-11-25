@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, RotateCcw, X, Search } from 'lucide-react';
 import { listAllBranches, createBranch, deleteBranch, reactivateBranch, ApiError } from '@/lib/apiClient';
+import { compareBranchNames } from '@/lib/branchOrder';
 import type { Branch } from '@/types';
 
 export default function Branches() {
@@ -28,7 +29,7 @@ export default function Branches() {
     return rows
       .filter((b) => showInactive || b.active)
       .filter((b) => !term || b.name.toLowerCase().includes(term))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => compareBranchNames(a.name, b.name));
   }, [branchesQuery.data, search, showInactive]);
 
   const deleteMutation = useMutation({

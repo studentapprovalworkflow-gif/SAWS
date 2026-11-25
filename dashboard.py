@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import config
 from auth import ApiError, require_role_
-from branches import list_branches_
+from branches import list_branches_, sort_branch_names_
 from db_utils import read_sheet_as_objects_, get_cached_
 
 
@@ -243,7 +243,7 @@ def get_dashboard_data_(user, params=None):
                 )
                 for name in selected_workflows
             }}
-            for branch in sorted(branch_names)
+            for branch in sort_branch_names_(branch_names)
         ]
 
         daily_branch_count = [
