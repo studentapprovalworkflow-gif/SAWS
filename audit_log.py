@@ -2,13 +2,15 @@
 audit_log.py
 Append-only log of security-relevant actions. Direct port of AuditLog.gs.
 """
+from datetime import datetime, timezone
+
 import config
-from db_utils import append_row_, read_sheet_as_objects_, now_iso_
+from db_utils import append_row_, read_sheet_as_objects_
 
 
 def log_audit_(user_email, action, details, branch, browser):
     append_row_(config.SHEET_AUDITLOGS, {
-        'Timestamp': now_iso_(),
+        'Timestamp': datetime.now(timezone.utc).isoformat(timespec='seconds'),
         'User Email': user_email or '',
         'Action': action or '',
         'Details': details or '',

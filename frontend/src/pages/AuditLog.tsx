@@ -6,14 +6,16 @@ import { listAuditLogs, listBranches } from '@/lib/apiClient';
 const ACTIONS = ['LOGIN', 'LOGOUT', 'CREATE', 'UPDATE', 'DELETE', 'STAGE_TRANSITION'];
 
 function formatTimestamp(ts: string): string {
-  const d = new Date(ts);
+  const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(ts);
+  const d = new Date(hasTimezone ? ts : `${ts}Z`);
   if (Number.isNaN(d.getTime())) return String(ts);
   return d.toLocaleString(undefined, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    timeZone: 'Asia/Kolkata'
   });
 }
 
