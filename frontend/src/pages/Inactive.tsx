@@ -61,6 +61,13 @@ const STATUS_STYLES: Record<InactiveStatus, string> = {
   INACTIVE_PENDING_SCM: 'bg-reject-light text-reject'
 };
 
+function inactiveStatusDisplay(row: InactiveEntry): string {
+  if (row['Last Rejection Reason'] && row['Last Rejected Stage']) {
+    return `${row['Last Rejected Stage']} Rejected`;
+  }
+  return INACTIVE_STATUS_LABELS[row.Status] || row.Status;
+}
+
 function browser() {
   return typeof navigator !== 'undefined' ? navigator.userAgent : '';
 }
@@ -424,7 +431,7 @@ function InactiveDetailsModal({
               <p><span className="text-ink-700/50">Branch:</span> {row.Branch}</p>
               <p><span className="text-ink-700/50">Batch Name:</span> {row['Batch Name'] || '—'}</p>
               <p><span className="text-ink-700/50">Faculty Name:</span> {row['Faculty Name'] || '—'}</p>
-              <p><span className="text-ink-700/50">Status:</span> {INACTIVE_STATUS_LABELS[row.Status] || row.Status}</p>
+              <p><span className="text-ink-700/50">Status:</span> {inactiveStatusDisplay(row)}</p>
             </div>
           </div>
           <div className="rounded-lg border border-ink-100 bg-white p-4">
@@ -452,7 +459,7 @@ function InactiveDetailsModal({
             {(isAdmin||isHO) && row['Screenshot Uploaded'] && <ViewAttachmentButton mid={row.MID} sheet={sheet}/>}
           </div>
           <ReasonBoxInactive label="Reason" value={row.Reason} defaultOpen={isAdmin||isHO} />
-          {row['Last Rejection Reason'] && <ReasonBoxInactive label={`Last rejection — ${row['Last Rejected By'] || 'Unknown'}`} value={row['Last Rejection Reason']} defaultOpen={isAdmin||isHO} />}
+          {row['Last Rejection Reason'] && <ReasonBoxInactive label={`Last rejection — ${row['Last Rejected By'] || 'Unknown'} (${row['Last Rejected Stage'] || '—'})`} value={row['Last Rejection Reason']} defaultOpen />}
         </div>
         <div className="flex flex-wrap gap-2 pt-4 border-t border-ink-100">
           {isHO && row.canHeadOfficeApprove && <button onClick={() => onApproveHeadOffice()} className="inline-flex items-center gap-1.5 rounded-md bg-approve text-white px-3 py-1.5 text-sm"><Check size={14}/>Approve</button>}
@@ -719,7 +726,7 @@ export default function Inactive() {
         'Phone Number 3': row['Phone Number 3'] || '',
         'Last Present Day': row['Last Present Day'],
         Reason: row.Reason,
-        Status: INACTIVE_STATUS_LABELS[row.Status] || row.Status,
+        Status: inactiveStatusDisplay(row),
         'Entry Date': row['Entry Date'] || '',
         'Head Office Decision': row['Head Office Decision'] || '',
         'Head Office Name': row['Head Office Name'] || '',
@@ -874,7 +881,7 @@ export default function Inactive() {
         const attentionRows = tab === 'active' ? rows.filter((r) => r['Awaiting My Action']) : [];
         const hasAttention = attentionRows.length > 0;
         const mainRows = hasAttention ? rows.filter((r) => !r['Awaiting My Action']) : rows;
-        const showBranch = user?.role === 'Head Office';
+        const showWorkflowFields = user?.role === 'Admin' || user?.role === 'Head Office';
 
         const renderHead = () => (
           <thead className={STICKY_HEAD_CLASS}>
@@ -883,8 +890,11 @@ export default function Inactive() {
               <SortableTh label="MID" sortKey="MID" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
               <SortableTh label="Student" sortKey="Student Name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
               <SortableTh label="Branch" sortKey="Branch" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
-              {showBranch && (
-                <SortableTh label="Batch Name" sortKey="Batch Name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+              {showWorkflowFields && (
+                <>
+                  <SortableTh label="Batch Name" sortKey="Batch Name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Faculty Name" sortKey="Faculty Name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+                </>
               )}
               <th className="px-3 py-1.5 font-medium">Phone numbers</th>
               <SortableTh label="Status" sortKey="Status" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
@@ -911,7 +921,12 @@ export default function Inactive() {
                   <td className="px-3 py-1.5 font-mono text-xs">{row.MID}</td>
                   <td className="px-3 py-1.5 font-medium">{row['Student Name']}</td>
                   <td className="px-3 py-1.5 text-ink-700/70">{row.Branch || '—'}</td>
-                  {showBranch && <td className="px-3 py-1.5 text-ink-700/70">{row['Batch Name'] || '—'}</td>}
+                  {showWorkflowFields && (
+                    <>
+                      <td className="px-3 py-1.5 text-ink-700/70">{row['Batch Name'] || '—'}</td>
+                      <td className="px-3 py-1.5 text-ink-700/70">{row['Faculty Name'] || '—'}</td>
+                    </>
+                  )}
                   <td className="px-3 py-1.5 text-ink-700/70">
                     {phones.length
                       ? phones.map((p, j) => <div key={j} className="font-mono text-xs">{p}</div>)
@@ -919,7 +934,7 @@ export default function Inactive() {
                   </td>
                   <td className="px-3 py-1.5">
                     <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs ${STATUS_STYLES[row.Status] || 'bg-paper text-ink-700'}`}>
-                      {INACTIVE_STATUS_LABELS[row.Status] || row.Status}
+                      {inactiveStatusDisplay(row)}
                     </span>
                     {awaitingMyAction && (
                       <span className="ml-1.5 inline-block rounded-full px-2 py-0.5 text-[10px] font-medium bg-amber text-white align-middle">

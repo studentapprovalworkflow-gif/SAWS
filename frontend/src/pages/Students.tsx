@@ -771,8 +771,11 @@ export default function Students() {
               )}
               <SortableTh label="Student" sortKey="Student Name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
               <SortableTh label="Branch" sortKey="Branch" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
-              {user?.role === 'Head Office' && (
-                <SortableTh label="Batch Name" sortKey="Batch Name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+              {(user?.role === 'Admin' || user?.role === 'Head Office') && (
+                <>
+                  <SortableTh label="Batch Name" sortKey="Batch Name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Faculty Name" sortKey="Faculty Name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+                </>
               )}
               <th className="px-3 py-1.5 font-medium">Phone numbers</th>
               <SortableTh label="Status" sortKey="Status" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
@@ -989,6 +992,9 @@ export default function Students() {
 // automatically narrows down as each flagged role resubmits. Falls
 // back to the plain status label for statuses without that detail.
 function statusDisplay(row: StudentEntry): string {
+  if (row['Last Rejection Reason'] && row['Last Rejected Stage']) {
+    return `${row['Last Rejected Stage']} Rejected`;
+  }
   return row['Current Stage'] || STATUS_LABELS[row.Status] || row.Status;
 }
 
@@ -1572,7 +1578,12 @@ function StudentRow({
       {showsBillingColumns(user?.role) && <td className="px-3 py-1.5 font-mono text-xs">{row.MID}</td>}
       <td className="px-3 py-1.5 font-medium">{row['Student Name']}</td>
       <td className="px-3 py-1.5 text-ink-700/70">{row.Branch || '—'}</td>
-      {isHeadOffice && <td className="px-3 py-1.5 text-ink-700/70">{row['Batch Name'] || '—'}</td>}
+      {(isAdmin || isHeadOffice) && (
+        <>
+          <td className="px-3 py-1.5 text-ink-700/70">{row['Batch Name'] || '—'}</td>
+          <td className="px-3 py-1.5 text-ink-700/70">{row['Faculty Name'] || '—'}</td>
+        </>
+      )}
       <td className="px-3 py-1.5 text-ink-700/70">{phones.length ? phones.map((p, i) => <div key={i} className="font-mono text-xs">{p}</div>) : <span className="text-ink-700/30 italic">—</span>}</td>
       <td className="px-3 py-1.5">
         <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs ${STATUS_STYLES[status]}`}>{statusDisplay(row)}</span>

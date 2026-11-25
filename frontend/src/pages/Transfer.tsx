@@ -28,6 +28,13 @@ const STATUS_STYLES: Record<TransferStatus,string> = {
   TRANSFER_PENDING_SCM:'bg-reject-light text-reject',
   TRANSFER_APPROVED:'bg-approve-light text-approve'
 };
+
+function transferStatusDisplay(row: TransferEntry): string {
+  if (row['Last Rejection Reason'] && row['Last Rejected Stage']) {
+    return `${row['Last Rejected Stage']} Rejected`;
+  }
+  return TRANSFER_STATUS_LABELS[row.Status] || row.Status;
+}
 function errorText(e: unknown, fallback: string) {
   if (e instanceof ApiError) {
     const m: Record<string,string> = {
@@ -248,7 +255,7 @@ function TransferDetailsModal({
             <p><span className="text-ink-700/50">Batch Name:</span> {row['Batch Name'] || '—'}</p>
             <p><span className="text-ink-700/50">Faculty Name:</span> {row['Faculty Name'] || '—'}</p>
             <p><span className="text-ink-700/50">Transfer to:</span> {row['Transfer To Branch']}</p>
-            <p><span className="text-ink-700/50">Status:</span> {TRANSFER_STATUS_LABELS[row.Status]||row.Status}</p>
+            <p><span className="text-ink-700/50">Status:</span> {transferStatusDisplay(row)}</p>
           </div>
         </div>
         <div className="rounded-lg border border-ink-100 bg-white p-4">
@@ -282,7 +289,7 @@ function TransferDetailsModal({
           {(isAdmin||isHO) && row['Screenshot Uploaded'] && <ViewAttachmentButton mid={row.MID} sheet={sheet}/>}
         </div>
         <TransferReasonBox value={row.Reason} defaultOpen={isAdmin||isHO}/>
-        {row['Last Rejection Reason']&&<TransferReasonBox value={row['Last Rejection Reason']} defaultOpen={isAdmin||isHO}/>}
+        {row['Last Rejection Reason']&&<TransferReasonBox value={`Rejected by ${row['Last Rejected By'] || 'Unknown'} (${row['Last Rejected Stage'] || '—'}): ${row['Last Rejection Reason']}`} defaultOpen/>}
       </div>
       <div className="flex flex-wrap gap-2 pt-4 border-t border-ink-100">
         {isHO && row.canHeadOfficeApprove && <button onClick={()=>onApproveHeadOffice()} className="inline-flex items-center gap-1.5 rounded-md bg-approve text-white px-3 py-1.5 text-sm"><Check size={14}/>Approve</button>}
@@ -311,7 +318,7 @@ export default function Transfer() {
 
   React.useEffect(()=>{const t=sp.get('tab')==='completed'?'completed':'active';if(t!==tab){setTab(t);setPage(1)} const q=sp.get('search')||'';if(q!==search){setSearch(q);setPage(1)}},[sp]); // eslint-disable-line react-hooks/exhaustive-deps
   const params=useMemo(()=>({search:search.trim()||undefined,branch:branchFilter||undefined,batch:batchFilter||undefined,sortBy:sortBy||undefined,sortDir:sortBy?sortDir:undefined,page,pageSize:effectivePageSize}),[search,branchFilter,batchFilter,sortBy,sortDir,page,effectivePageSize]);
-  const showBranch=user?.role==='Head Office'; // Head Office sees every branch, so show which one each row belongs to
+  const showWorkflowFields=user?.role==='Admin'||user?.role==='Head Office';
   const branchesQuery=useQuery({queryKey:['branches'],queryFn:listBranches,enabled:user?.role==='Admin'||user?.role==='Head Office'});
   const query=useQuery({queryKey:['transfer',tab,params],queryFn:()=>listTransfer(tab==='completed'?'completed':'response',params),enabled:!!user});
   React.useEffect(()=>{
@@ -345,7 +352,7 @@ export default function Transfer() {
       const all:TransferEntry[]=[]; let pg=1; let totalRows=0;
       do { const r=await listTransfer(tab==='completed'?'completed':'response',{search:search.trim()||undefined,branch:branchFilter||undefined,batch:batchFilter||undefined,page:pg,pageSize:200}); all.push(...r.rows); totalRows=r.total; pg++; if(!r.rows.length)break; } while(all.length<totalRows);
       if(!all.length){setError('There are no records to download for the current filters.');return;}
-      const out=all.map(r=>({'Sl No':r['Sl No'],Branch:r.Branch,MID:r.MID,'Student Name':r['Student Name'],'Phone Number 1':r['Phone Number 1'],'Phone Number 2':r['Phone Number 2']||'','Phone Number 3':r['Phone Number 3']||'','Transfer To Branch':r['Transfer To Branch'],Reason:r.Reason,Status:TRANSFER_STATUS_LABELS[r.Status]||r.Status,'Entry Date':r['Entry Date']||'','Head Office Decision':r['Head Office Decision']||'','Head Office Name':r['Head Office Name']||'','Head Office Date':r['Head Office Date']||'','Admin Approval':r['Admin Approval']||'','Admin Name':r['Admin Name']||'','Approval Date':r['Approval Date']||'','Last Rejection Reason':r['Last Rejection Reason']||'','Last Rejected By':r['Last Rejected By']||'','Last Rejected Stage':r['Last Rejected Stage']||'','Last Rejected Date':r['Last Rejected Date']||''}));
+      const out=all.map(r=>({'Sl No':r['Sl No'],Branch:r.Branch,MID:r.MID,'Student Name':r['Student Name'],'Phone Number 1':r['Phone Number 1'],'Phone Number 2':r['Phone Number 2']||'','Phone Number 3':r['Phone Number 3']||'','Transfer To Branch':r['Transfer To Branch'],Reason:r.Reason,Status:transferStatusDisplay(r),'Entry Date':r['Entry Date']||'','Head Office Decision':r['Head Office Decision']||'','Head Office Name':r['Head Office Name']||'','Head Office Date':r['Head Office Date']||'','Admin Approval':r['Admin Approval']||'','Admin Name':r['Admin Name']||'','Approval Date':r['Approval Date']||'','Last Rejection Reason':r['Last Rejection Reason']||'','Last Rejected By':r['Last Rejected By']||'','Last Rejected Stage':r['Last Rejected Stage']||'','Last Rejected Date':r['Last Rejected Date']||''}));
       const base=`transfer_${tab==='completed'?'approved':'active'}_${new Date().toISOString().slice(0,10)}`;
       if(format==='csv'){const h=Object.keys(out[0]);const esc=(v:unknown)=>{const x=v==null?'':String(v);return /[",\n]/.test(x)?`"${x.replace(/"/g,'""')}"`:x};const csv=[h.join(','),...out.map(r=>h.map(k=>esc(r[k as keyof typeof r])).join(','))].join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));a.download=`${base}.csv`;a.click();}
       else if(format==='xlsx'){const ws=XLSX.utils.json_to_sheet(out);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,tab==='completed'?'Approved':'Active');XLSX.writeFile(wb,`${base}.xlsx`);}
@@ -430,7 +437,12 @@ export default function Transfer() {
             <SortableTh label="MID" sortKey="MID" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
             <SortableTh label="Student" sortKey="Student Name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
             <SortableTh label="Branch" sortKey="Branch" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
-            {showBranch && <SortableTh label="Batch Name" sortKey="Batch Name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />}
+            {showWorkflowFields && (
+              <>
+                <SortableTh label="Batch Name" sortKey="Batch Name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+                <SortableTh label="Faculty Name" sortKey="Faculty Name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+              </>
+            )}
             <th className="px-3 py-1.5 font-medium">Phone numbers</th>
             <SortableTh label="Status" sortKey="Status" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
             <th className="px-3 py-1.5 font-medium" aria-hidden="true"></th>
@@ -454,14 +466,19 @@ export default function Transfer() {
                 <td className="px-3 py-1.5 font-mono text-xs">{r.MID}</td>
                 <td className="px-3 py-1.5 font-medium">{r['Student Name']}</td>
                 <td className="px-3 py-1.5 text-ink-700/70">{r.Branch||'—'}</td>
-                {showBranch && <td className="px-3 py-1.5 text-ink-700/70">{r['Batch Name']||'—'}</td>}
+                {showWorkflowFields && (
+                  <>
+                    <td className="px-3 py-1.5 text-ink-700/70">{r['Batch Name']||'—'}</td>
+                    <td className="px-3 py-1.5 text-ink-700/70">{r['Faculty Name']||'—'}</td>
+                  </>
+                )}
                 <td className="px-3 py-1.5 text-ink-700/70">
                   {phones.length
                     ? phones.map((p,j)=><div key={j} className="font-mono text-xs">{p}</div>)
                     : <span className="text-ink-700/30 italic">—</span>}
                 </td>
                 <td className="px-3 py-1.5">
-                  <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs ${STATUS_STYLES[r.Status]}`}>{TRANSFER_STATUS_LABELS[r.Status]||r.Status}</span>
+                  <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs ${STATUS_STYLES[r.Status]}`}>{transferStatusDisplay(r)}</span>
                   {awaitingMyAction && (
                     <span className="ml-1.5 inline-block rounded-full px-2 py-0.5 text-[10px] font-medium bg-amber text-white align-middle">
                       Needs your decision
