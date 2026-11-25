@@ -195,7 +195,11 @@ export interface StudentListResult {
 export interface StudentListParams {
   /** Single combined search box: matched against MID, name, and phone 1-3 (OR). */
   search?: string;
+  statuses?: string[];
+  branches?: string[];
+  /** @deprecated Use statuses for a multi-select filter. */
   status?: string;
+  /** @deprecated Use branches for a multi-select filter. */
   branch?: string;
   /** Simple text-match filter on 'Batch Name'. */
   batch?: string;

@@ -81,7 +81,15 @@ interface DashboardRow {
 
 interface DashboardRowsResult {
   total: number;
-  rows: DashboardRow[];
+  rows: (DashboardRow | DashboardActivityRow)[];
+}
+
+interface DashboardActivityRow {
+  timestamp: string;
+  userEmail: string;
+  action: 'CREATE' | 'UPDATE' | 'STAGE_TRANSITION';
+  details: string;
+  branch: string;
 }
 
 interface DashboardExportData {
@@ -91,7 +99,16 @@ interface DashboardExportData {
 
 type DashboardSelection =
   | { kind: 'metric'; metric: OverviewMetric }
-  | { kind: 'status'; workflow: DashboardWorkflow; status: string };
+  | { kind: 'status'; workflow: DashboardWorkflow; status: string }
+  | { kind: 'branchEntries'; branch: string }
+  | { kind: 'branchActivity'; branch: string };
+
+type ActivitySortKey = 'timestamp' | 'userEmail' | 'action' | 'details';
+const ACTIVITY_ACTIONS: DashboardActivityRow['action'][] = ['CREATE', 'UPDATE', 'STAGE_TRANSITION'];
+
+function isDashboardActivityRow(row: DashboardRow | DashboardActivityRow): row is DashboardActivityRow {
+  return 'action' in row;
+}
 
 // Shared blue scale for any chart shaded by rank: darkest = highest value,
 // lightest = lowest. Capped at a mid-light blue (not the palest tint) so the
@@ -264,23 +281,24 @@ export default function Overview() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  // Admin and Head Office see every branch by default and can narrow down
-  // to one via the dropdown below. Every other role only ever sees their
-  // own branch, so there's nothing for them to filter - just a download
-  // button for their own branch's overview.
+  // Admin and Head Office can select branches; other roles remain restricted
+  // to their own branch and can filter workflows and dates.
   const hasFullVisibility = user?.role === 'Admin' || user?.role === 'Head Office';
   const canDownloadData = user?.role === 'Admin' || user?.role === 'Head Office' || user?.role === 'SCM';
 
   const [savedFilters] = useState(readOverviewFilters);
-  const [branchFilter, setBranchFilter] = useState(savedFilters.branch);
-  const [workflowFilter, setWorkflowFilter] = useState(savedFilters.workflow);
+  const [branchFilters, setBranchFilters] = useState(savedFilters.branches);
+  const [workflowFilters, setWorkflowFilters] = useState(savedFilters.workflows);
   const [dateFrom, setDateFrom] = useState(savedFilters.dateFrom);
   const [dateTo, setDateTo] = useState(savedFilters.dateTo);
   const [dashboardSelection, setDashboardSelection] = useState<DashboardSelection | null>(null);
-  const [openColumnFilter, setOpenColumnFilter] = useState<'branch' | 'workflow' | 'status' | null>(null);
+  const [openColumnFilter, setOpenColumnFilter] = useState<'branch' | 'workflow' | 'status' | 'action' | null>(null);
   const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
   const [selectedWorkflows, setSelectedWorkflows] = useState<string[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+  const [selectedActivityActions, setSelectedActivityActions] = useState<string[]>([]);
+  const [activitySearch, setActivitySearch] = useState('');
+  const [activitySort, setActivitySort] = useState<{ key: ActivitySortKey; direction: 'asc' | 'desc' }>({ key: 'timestamp', direction: 'desc' });
   const columnFilterMenuRef = useRef<HTMLDivElement>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
@@ -299,27 +317,27 @@ export default function Overview() {
   // the real filter state (which actually re-queries) when "Apply filters"
   // is clicked - same pattern as the Students page.
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [draftBranch, setDraftBranch] = useState('');
-  const [draftWorkflow, setDraftWorkflow] = useState('');
+  const [draftBranches, setDraftBranches] = useState<string[]>([]);
+  const [draftWorkflows, setDraftWorkflows] = useState<string[]>([]);
   const [draftDateFrom, setDraftDateFrom] = useState('');
   const [draftDateTo, setDraftDateTo] = useState('');
 
   function openFilters() {
-    setDraftBranch(branchFilter);
-    setDraftWorkflow(workflowFilter);
+    setDraftBranches(branchFilters);
+    setDraftWorkflows(workflowFilters);
     setDraftDateFrom(dateFrom);
     setDraftDateTo(dateTo);
     setFiltersOpen(true);
   }
 
   function applyFilters() {
-    setBranchFilter(draftBranch);
-    setWorkflowFilter(draftWorkflow);
+    setBranchFilters(draftBranches);
+    setWorkflowFilters(draftWorkflows);
     setDateFrom(draftDateFrom);
     setDateTo(draftDateTo);
     writeOverviewFilters({
-      branch: draftBranch,
-      workflow: draftWorkflow,
+      branches: draftBranches,
+      workflows: draftWorkflows,
       dateFrom: draftDateFrom,
       dateTo: draftDateTo
     });
@@ -327,21 +345,26 @@ export default function Overview() {
   }
 
   function clearDraftFilters() {
-    setDraftBranch('');
-    setDraftWorkflow('');
+    setDraftBranches([]);
+    setDraftWorkflows([]);
     setDraftDateFrom('');
     setDraftDateTo('');
   }
 
   function clearAllFilters() {
-    setBranchFilter('');
-    setWorkflowFilter('');
+    setBranchFilters([]);
+    setWorkflowFilters([]);
     setDateFrom('');
     setDateTo('');
-    writeOverviewFilters({ branch: '', workflow: '', dateFrom: '', dateTo: '' });
+    writeOverviewFilters({ branches: [], workflows: [], dateFrom: '', dateTo: '' });
   }
 
-  const activeFilterCount = [hasFullVisibility ? branchFilter : '', hasFullVisibility ? workflowFilter : '', dateFrom, dateTo].filter(Boolean).length;
+  const activeFilterCount = [
+    hasFullVisibility && branchFilters.length > 0,
+    workflowFilters.length > 0,
+    !!dateFrom,
+    !!dateTo
+  ].filter(Boolean).length;
 
   const branchesQuery = useQuery({
     queryKey: ['branches'],
@@ -478,55 +501,81 @@ export default function Overview() {
   // its own page (/admin/links, Admin-only) - see SystemLinks.tsx.
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['dashboard', hasFullVisibility ? branchFilter : user?.branch, dateFrom, dateTo, hasFullVisibility ? workflowFilter : ''],
+    queryKey: ['dashboard', hasFullVisibility ? branchFilters : user?.branch, dateFrom, dateTo, workflowFilters],
     queryFn: () =>
       callApi<DashboardData>('dashboard.get', {
-        ...(hasFullVisibility && branchFilter ? { branch: branchFilter } : {}),
-        ...(hasFullVisibility && workflowFilter ? { workflow: workflowFilter } : {}),
+        ...(hasFullVisibility && branchFilters.length ? { branches: branchFilters } : {}),
+        ...(workflowFilters.length ? { workflows: workflowFilters } : {}),
         ...(dateFrom ? { dateFrom } : {}),
         ...(dateTo ? { dateTo } : {})
       })
   });
 
   const dashboardRowsQuery = useQuery({
-    queryKey: ['dashboard-rows', dashboardSelection, branchFilter, workflowFilter, dateFrom, dateTo],
+    queryKey: ['dashboard-rows', dashboardSelection, branchFilters, workflowFilters, dateFrom, dateTo],
     queryFn: () => {
       const selectionParams = dashboardSelection?.kind === 'status'
         ? { metric: 'statusDistribution', workflow: dashboardSelection.workflow, status: dashboardSelection.status }
-        : { metric: dashboardSelection?.kind === 'metric' ? dashboardSelection.metric : '' };
+        : dashboardSelection?.kind === 'branchEntries'
+          ? { metric: 'monthlyEntries', branch: dashboardSelection.branch }
+          : dashboardSelection?.kind === 'branchActivity'
+            ? { metric: 'branchActivity', branch: dashboardSelection.branch }
+            : { metric: dashboardSelection?.kind === 'metric' ? dashboardSelection.metric : '' };
       return callApi<DashboardRowsResult>('dashboard.rows', {
         ...selectionParams,
-        ...(branchFilter ? { branch: branchFilter } : {}),
-        ...(dashboardSelection?.kind !== 'status' && workflowFilter ? { workflow: workflowFilter } : {}),
+        ...(dashboardSelection?.kind !== 'branchEntries' && dashboardSelection?.kind !== 'branchActivity' && hasFullVisibility && branchFilters.length ? { branches: branchFilters } : {}),
+        ...(dashboardSelection?.kind !== 'status' && workflowFilters.length ? { workflows: workflowFilters } : {}),
         ...(dateFrom ? { dateFrom } : {}),
         ...(dateTo ? { dateTo } : {})
       });
     },
-    enabled: !!dashboardSelection && hasFullVisibility
+    enabled: !!dashboardSelection && (
+      hasFullVisibility || dashboardSelection.kind === 'branchEntries' || dashboardSelection.kind === 'branchActivity'
+    )
   });
   const dashboardRows = dashboardRowsQuery.data?.rows ?? [];
-  const visibleDashboardRows = dashboardRows.filter((row) =>
+  const recordRows = dashboardRows.filter((row): row is DashboardRow => !isDashboardActivityRow(row));
+  const activityRows = dashboardRows.filter(isDashboardActivityRow);
+  const visibleDashboardRows = recordRows.filter((row) =>
     (!selectedBranches.length || selectedBranches.includes(row.branch)) &&
     (!selectedWorkflows.length || selectedWorkflows.includes(row.workflow)) &&
     (!selectedStatuses.length || selectedStatuses.includes(row.currentStatus))
   );
-  const branchOptions = sortBranchNames([...new Set(dashboardRows.map((row) => row.branch))]);
-  const workflowOptions = [...new Set(dashboardRows.map((row) => row.workflow))];
-  const statusOptions = [...new Set(dashboardRows.map((row) => row.currentStatus))];
-  const branchCounts = dashboardRows.reduce<Record<string, number>>((counts, row) => {
+  const branchOptions = sortBranchNames([...new Set(recordRows.map((row) => row.branch))]);
+  const workflowOptions = [...new Set(recordRows.map((row) => row.workflow))];
+  const statusOptions = [...new Set(recordRows.map((row) => row.currentStatus))];
+  const branchCounts = recordRows.reduce<Record<string, number>>((counts, row) => {
     counts[row.branch] = (counts[row.branch] || 0) + 1;
     return counts;
   }, {});
-  const workflowCounts = dashboardRows.reduce<Record<string, number>>((counts, row) => {
+  const workflowCounts = recordRows.reduce<Record<string, number>>((counts, row) => {
     counts[row.workflow] = (counts[row.workflow] || 0) + 1;
     return counts;
   }, {});
-  const statusCounts = dashboardRows.reduce<Record<string, number>>((counts, row) => {
+  const statusCounts = recordRows.reduce<Record<string, number>>((counts, row) => {
     counts[row.currentStatus] = (counts[row.currentStatus] || 0) + 1;
     return counts;
   }, {});
   const toggleSelection = (value: string, selected: string[], update: (next: string[]) => void) => {
     update(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
+  };
+  const searchTerm = activitySearch.trim().toLocaleLowerCase();
+  const visibleActivityRows = activityRows
+    .filter((row) =>
+      (!selectedActivityActions.length || selectedActivityActions.includes(row.action)) &&
+      (!searchTerm || `${row.timestamp} ${row.userEmail} ${row.action} ${row.details}`.toLocaleLowerCase().includes(searchTerm))
+    )
+    .sort((left, right) => {
+      const comparison = activitySort.key === 'timestamp'
+        ? Date.parse(left.timestamp) - Date.parse(right.timestamp)
+        : left[activitySort.key].localeCompare(right[activitySort.key], undefined, { numeric: true, sensitivity: 'base' });
+      return activitySort.direction === 'asc' ? comparison : -comparison;
+    });
+  const toggleActivitySort = (key: ActivitySortKey) => {
+    setActivitySort((current) => ({
+      key,
+      direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc'
+    }));
   };
 
   useEffect(() => {
@@ -540,8 +589,10 @@ export default function Overview() {
     return () => document.removeEventListener('mousedown', closeColumnFilterOnOutsideClick);
   }, [openColumnFilter]);
 
-  const branchLabel = hasFullVisibility ? branchFilter || 'All branches' : user?.branch || 'My branch';
-  const workflowLabel = hasFullVisibility ? workflowFilter || 'All workflows' : '';
+  const branchLabel = hasFullVisibility
+    ? branchFilters.length ? branchFilters.join(', ') : 'All branches'
+    : user?.branch || 'My branch';
+  const workflowLabel = workflowFilters.length ? workflowFilters.join(', ') : 'All workflows';
   const workflowPath = (workflow: string) => {
     if (workflow === 'Inactive') return '/inactive';
     if (workflow === 'Transfer') return '/transfer';
@@ -555,7 +606,23 @@ export default function Overview() {
     setSelectedBranches([]);
     setSelectedWorkflows([]);
     setSelectedStatuses([]);
+    setSelectedActivityActions([]);
+    setActivitySearch('');
     setDashboardSelection({ kind: 'status', workflow, status });
+  };
+  const openBranchEntries = (branch: string) => {
+    setOpenColumnFilter(null);
+    setSelectedBranches([]);
+    setSelectedWorkflows([]);
+    setSelectedStatuses([]);
+    setDashboardSelection({ kind: 'branchEntries', branch });
+  };
+  const openBranchActivity = (branch: string) => {
+    setOpenColumnFilter(null);
+    setSelectedActivityActions([]);
+    setActivitySearch('');
+    setActivitySort({ key: 'timestamp', direction: 'desc' });
+    setDashboardSelection({ kind: 'branchActivity', branch });
   };
   const openDashboardRow = (row: DashboardRow) => {
     const tab = row.tab === 'completed' ? 'completed' : 'active';
@@ -600,8 +667,8 @@ export default function Overview() {
     setDownloadError(null);
     try {
       const exportData = await callApi<DashboardExportData>('dashboard.exportData', {
-        ...(hasFullVisibility && branchFilter ? { branch: branchFilter } : {}),
-        ...(hasFullVisibility && workflowFilter ? { workflow: workflowFilter } : {}),
+        ...(hasFullVisibility && branchFilters.length ? { branches: branchFilters } : {}),
+        ...(workflowFilters.length ? { workflows: workflowFilters } : {}),
         ...(dateFrom ? { dateFrom } : {}),
         ...(dateTo ? { dateTo } : {})
       });
@@ -633,11 +700,11 @@ export default function Overview() {
           <h2 className="font-display text-lg">Welcome, {user?.name}</h2>
           <p className="text-xs text-ink-700/60 mt-0.5">
             {hasFullVisibility
-              ? branchFilter
-                ? `Overview for ${branchFilter}.`
+              ? branchFilters.length
+                ? `Overview for ${branchFilters.join(', ')}.`
                 : 'Overview across every branch.'
               : `Overview for ${user?.branch}.`}
-            {hasFullVisibility && workflowFilter ? ` Workflow: ${workflowLabel}.` : ''}
+            {workflowFilters.length ? ` Workflow: ${workflowLabel}.` : ''}
             {dateRangeLabel ? ` Filtered ${dateRangeLabel}.` : ''}
           </p>
         </div>
@@ -760,37 +827,47 @@ export default function Overview() {
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
             {hasFullVisibility && (
               <div>
-                <label className="block text-xs font-medium text-ink-700/70 mb-1.5">Branch</label>
-                <select
-                  value={draftBranch}
-                  onChange={(e) => setDraftBranch(e.target.value)}
-                  className="w-full rounded-md border border-ink-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ink-900"
-                >
-                  <option value="">All branches</option>
-                  {(branchesQuery.data || []).map((b) => (
-                    <option key={b} value={b}>
-                      {b}
-                    </option>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <label className="block text-xs font-medium text-ink-700/70">Branches</label>
+                  <button type="button" onClick={() => setDraftBranches([])} className="text-xs text-ink-700/60 hover:text-ink-900">
+                    All branches
+                  </button>
+                </div>
+                <div className="max-h-48 overflow-y-auto rounded-md border border-ink-200 p-2">
+                  {(branchesQuery.data || []).map((branch) => (
+                    <label key={branch} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-paper">
+                      <input
+                        type="checkbox"
+                        checked={draftBranches.includes(branch)}
+                        onChange={() => toggleSelection(branch, draftBranches, setDraftBranches)}
+                      />
+                      <span>{branch}</span>
+                    </label>
                   ))}
-                </select>
+                </div>
               </div>
             )}
 
-            {hasFullVisibility && (
-              <div>
-                <label className="block text-xs font-medium text-ink-700/70 mb-1.5">Workflow</label>
-                <select
-                  value={draftWorkflow}
-                  onChange={(e) => setDraftWorkflow(e.target.value)}
-                  className="w-full rounded-md border border-ink-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ink-900"
-                >
-                  <option value="">All workflows</option>
-                  <option value="Discontinue">Discontinue</option>
-                  <option value="Inactive">Inactive</option>
-                  <option value="Transfer">Transfer</option>
-                </select>
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="block text-xs font-medium text-ink-700/70">Workflows</label>
+                <button type="button" onClick={() => setDraftWorkflows([])} className="text-xs text-ink-700/60 hover:text-ink-900">
+                  All workflows
+                </button>
               </div>
-            )}
+              <div className="rounded-md border border-ink-200 p-2">
+                {(['Discontinue', 'Inactive', 'Transfer'] as const).map((workflow) => (
+                  <label key={workflow} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-paper">
+                    <input
+                      type="checkbox"
+                      checked={draftWorkflows.includes(workflow)}
+                      onChange={() => toggleSelection(workflow, draftWorkflows, setDraftWorkflows)}
+                    />
+                    <span>{workflow}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
 
             <div>
               <label className="block text-xs font-medium text-ink-700/70 mb-1.5">Date range</label>
@@ -924,8 +1001,7 @@ export default function Overview() {
             ))}
           </div>
 
-          {!workflowFilter && (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {data.charts.workflowComparison.map((w) => (
                 <div key={w.workflow} className="bg-white rounded-lg border border-ink-100 shadow-panel p-4">
                   <p className="text-sm font-medium">{w.workflow}</p>
@@ -942,8 +1018,7 @@ export default function Overview() {
                   </div>
                 </div>
               ))}
-            </div>
-          )}
+          </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
             <div className="bg-white rounded-lg border border-ink-100 shadow-panel p-5 flex flex-col min-w-0 lg:col-span-2">
@@ -956,7 +1031,7 @@ export default function Overview() {
                         Branch
                       </th>
                       {(['Discontinue', 'Inactive', 'Transfer'] as const)
-                        .filter((workflow) => !workflowFilter || workflow === workflowFilter)
+                        .filter((workflow) => !workflowFilters.length || workflowFilters.includes(workflow))
                         .map((workflow) => (
                           <th key={workflow} colSpan={3} className="h-8 border-b border-ink-100 bg-white px-2 py-0 text-center font-medium">
                             {workflow}
@@ -965,7 +1040,7 @@ export default function Overview() {
                     </tr>
                     <tr className="bg-white text-ink-700/60">
                       {(['Discontinue', 'Inactive', 'Transfer'] as const)
-                        .filter((workflow) => !workflowFilter || workflow === workflowFilter)
+                        .filter((workflow) => !workflowFilters.length || workflowFilters.includes(workflow))
                         .flatMap((workflow) => (
                           ['Active', 'Approved', 'Total'].map((label) => (
                             <th key={`${workflow}-${label}`} className="h-8 border-b border-ink-100 bg-white px-2 py-0 font-medium">
@@ -980,7 +1055,7 @@ export default function Overview() {
                       <tr key={entry.branch} className="h-8 border-b border-ink-50 last:border-0">
                           <th className="branch-workflow-branch-cell h-8 px-2 py-0 text-left font-medium whitespace-nowrap">{entry.branch}</th>
                         {(['Discontinue', 'Inactive', 'Transfer'] as const)
-                          .filter((workflow) => !workflowFilter || workflow === workflowFilter)
+                          .filter((workflow) => !workflowFilters.length || workflowFilters.includes(workflow))
                           .flatMap((workflow) => {
                             const counts = entry.workflows[workflow];
                             return [
@@ -993,7 +1068,7 @@ export default function Overview() {
                     ))}
                     {data.charts.branchWorkflowCount.length === 0 && (
                       <tr>
-                        <td colSpan={1 + 3 * (workflowFilter ? 1 : 3)} className="px-2 py-6 text-center text-ink-700/50">
+                        <td colSpan={1 + 3 * (workflowFilters.length || 3)} className="px-2 py-6 text-center text-ink-700/50">
                           No branch records found.
                         </td>
                       </tr>
@@ -1003,7 +1078,9 @@ export default function Overview() {
               </div>
             </div>
 
-            {(workflowFilter ? [workflowFilter as 'Discontinue' | 'Inactive' | 'Transfer'] : ['Discontinue', 'Inactive', 'Transfer'] as const).map((workflow) => {
+            {(['Discontinue', 'Inactive', 'Transfer'] as const)
+              .filter((workflow) => !workflowFilters.length || workflowFilters.includes(workflow))
+              .map((workflow) => {
               const rows = data.charts.statusDistribution[workflow];
               return (
                 <div key={workflow} className={`bg-white rounded-lg border border-ink-100 shadow-panel p-5 flex flex-col ${workflow === 'Discontinue' ? 'lg:col-span-2' : ''}`}>
@@ -1089,10 +1166,13 @@ export default function Overview() {
                   </div>
                 </div>
               );
-            })}
+              })}
 
             <div className="bg-white rounded-lg border border-ink-100 shadow-panel p-5 flex flex-col">
-              <h3 className="text-sm font-medium mb-3 shrink-0">Today&rsquo;s Branch Activity</h3>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <h3 className="text-sm font-medium shrink-0">Today&rsquo;s Branch Activity</h3>
+                <span className="text-xs text-ink-700/50">Click a bar to view logs</span>
+              </div>
               <div className="flex-1 min-h-[220px]">
                 {data.charts.dailyBranchCount.length ? (
                   <ResponsiveContainer width="100%" height={260}>
@@ -1101,7 +1181,13 @@ export default function Overview() {
                       <XAxis dataKey="branch" tick={{ fontSize: 10 }} interval={0} angle={-30} textAnchor="end" height={60} />
                       <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
                       <Tooltip formatter={(value: number) => [value, 'Activities']} />
-                      <Bar dataKey="count" name="Activities" radius={[4, 4, 0, 0]}>
+                      <Bar
+                        dataKey="count"
+                        name="Activities"
+                        radius={[4, 4, 0, 0]}
+                        cursor="pointer"
+                        onClick={(entry: { branch?: string }) => entry?.branch && openBranchActivity(entry.branch)}
+                      >
                         {data.charts.dailyBranchCount.map((entry, index) => (
                           <Cell key={entry.branch} fill={shadeForRank(index)} />
                         ))}
@@ -1132,7 +1218,10 @@ export default function Overview() {
             </div>
 
             <div className="bg-white rounded-lg border border-ink-100 shadow-panel p-5 flex flex-col lg:col-span-2">
-              <h3 className="text-sm font-medium mb-3 shrink-0">Entries this month by branch</h3>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <h3 className="text-sm font-medium shrink-0">Entries this month by branch</h3>
+                <span className="text-xs text-ink-700/50">Click a bar to view entries</span>
+              </div>
               <div className="flex-1 min-h-[220px]">
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={data.charts.monthlyBranchCount} margin={{ bottom: 8 }}>
@@ -1140,7 +1229,13 @@ export default function Overview() {
                     <XAxis dataKey="branch" tick={{ fontSize: 10 }} interval={0} angle={-30} textAnchor="end" height={60} />
                     <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
                     <Tooltip formatter={(value: number) => [value, 'Entries']} />
-                    <Bar dataKey="count" name="Entries" radius={[4, 4, 0, 0]}>
+                    <Bar
+                      dataKey="count"
+                      name="Entries"
+                      radius={[4, 4, 0, 0]}
+                      cursor="pointer"
+                      onClick={(entry: { branch?: string }) => entry?.branch && openBranchEntries(entry.branch)}
+                    >
                       {data.charts.monthlyBranchCount.map((entry, index) => (
                         <Cell key={entry.branch} fill={shadeForRank(index)} />
                       ))}
@@ -1150,7 +1245,7 @@ export default function Overview() {
               </div>
             </div>
 
-            {hasFullVisibility && !branchFilter && data.charts.branchComparison.length > 0 && (() => {
+            {hasFullVisibility && !branchFilters.length && data.charts.branchComparison.length > 0 && (() => {
               // Sort highest -> lowest so the shade scale and the bar order agree.
               const sortedBranches = [...data.charts.branchComparison].sort((a, b) => b.total - a.total);
               return (
@@ -1169,7 +1264,10 @@ export default function Overview() {
                         dataKey="total"
                         radius={[4, 4, 0, 0]}
                         cursor="pointer"
-                        onClick={(bar: { branch?: string }) => bar?.branch && setBranchFilter(bar.branch)}
+                        onClick={(bar: { branch?: string }) => {
+                          if (!bar?.branch) return;
+                          setBranchFilters([bar.branch]);
+                        }}
                       >
                         {sortedBranches.map((entry, index) => (
                           <Cell key={entry.branch} fill={shadeForRank(index)} />
@@ -1181,17 +1279,17 @@ export default function Overview() {
               );
             })()}
 
-            {/* Once a branch is selected (via the table/chart above, or the
+            {/* Once branches are selected (via the table/chart above, or the
                 Filters panel), show a way back to every branch without
                 having to reopen Filters - keeps the drill-down a single
                 click each way. */}
-            {hasFullVisibility && branchFilter && (
+            {hasFullVisibility && branchFilters.length > 0 && (
               <div className="bg-white rounded-lg border border-ink-100 shadow-panel p-4 lg:col-span-2 flex items-center justify-between">
                 <p className="text-sm">
-                  Viewing <span className="font-medium">{branchFilter}</span> only.
+                  Viewing selected branches: <span className="font-medium">{branchFilters.join(', ')}</span>.
                 </p>
                 <button
-                  onClick={() => setBranchFilter('')}
+                  onClick={() => setBranchFilters([])}
                   className="flex items-center gap-1 text-sm text-ink-700/60 hover:text-ink-900 transition-colors"
                 >
                   <X size={13} />
@@ -1215,10 +1313,18 @@ export default function Overview() {
                 <h3 className="font-display text-lg">
                   {dashboardSelection.kind === 'metric'
                     ? `${CARD_DEFS.find((card) => card.key === dashboardSelection.metric)?.label} records`
-                    : `${dashboardSelection.workflow} — ${dashboardSelection.status} records`}
+                    : dashboardSelection.kind === 'status'
+                      ? `${dashboardSelection.workflow} — ${dashboardSelection.status} records`
+                      : dashboardSelection.kind === 'branchEntries'
+                        ? `${dashboardSelection.branch} — entries this month`
+                        : `${dashboardSelection.branch} — today’s activity`}
                 </h3>
                 <p className="text-xs text-ink-700/60 mt-0.5">
-                  {dashboardRowsQuery.data ? `${visibleDashboardRows.length} of ${dashboardRowsQuery.data.total} record(s)` : 'Matching the current overview filters'}
+                  {dashboardRowsQuery.data
+                    ? dashboardSelection.kind === 'branchActivity'
+                      ? `${visibleActivityRows.length} of ${dashboardRowsQuery.data.total} activity log(s)`
+                      : `${visibleDashboardRows.length} of ${dashboardRowsQuery.data.total} record(s)`
+                    : 'Matching the current overview filters'}
                 </p>
               </div>
               <button type="button" onClick={() => setDashboardSelection(null)} aria-label="Close records" className="text-ink-700/50 hover:text-ink-900">
@@ -1229,9 +1335,97 @@ export default function Overview() {
               {dashboardRowsQuery.isLoading && <p className="text-sm text-ink-700/60">Loading records…</p>}
               {dashboardRowsQuery.isError && <p className="text-sm text-reject">Couldn&rsquo;t load records. Please close and try again.</p>}
               {dashboardRowsQuery.data && dashboardRowsQuery.data.rows.length === 0 && (
-                <p className="text-sm text-ink-700/60">No records match this selection and the current filters.</p>
+                <p className="text-sm text-ink-700/60">
+                  {dashboardSelection.kind === 'branchActivity'
+                    ? 'No branch activity logs match this selection.'
+                    : 'No records match this selection and the current filters.'}
+                </p>
               )}
-              {dashboardRowsQuery.data && dashboardRowsQuery.data.rows.length > 0 && (
+              {dashboardSelection.kind === 'branchActivity' && dashboardRowsQuery.data && dashboardRowsQuery.data.rows.length > 0 && (
+                <div className="flex h-full min-h-0 min-w-[760px] flex-col">
+                  <div className="flex flex-wrap items-center gap-3 border-b border-ink-100 py-3">
+                    <div className="relative min-w-[220px] flex-1">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-700/40" />
+                      <input
+                        type="search"
+                        value={activitySearch}
+                        onChange={(event) => setActivitySearch(event.target.value)}
+                        placeholder="Search user, action, or details"
+                        aria-label="Search activity logs"
+                        className="w-full rounded-md border border-ink-200 py-2 pl-9 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-ink-900"
+                      />
+                    </div>
+                    <div className="relative" ref={columnFilterMenuRef}>
+                      <button
+                        type="button"
+                        onClick={() => setOpenColumnFilter(openColumnFilter === 'action' ? null : 'action')}
+                        aria-expanded={openColumnFilter === 'action'}
+                        className="rounded-md border border-ink-200 px-3 py-2 text-xs hover:bg-paper"
+                      >
+                        Actions {selectedActivityActions.length > 0 && `(${selectedActivityActions.length})`} ▾
+                      </button>
+                      {openColumnFilter === 'action' && (
+                        <div className="overview-filter-menu absolute right-0 top-full z-50 mt-1 w-56 rounded-md border border-ink-200 bg-white p-2 shadow-panel">
+                          <div className="flex justify-between border-b border-ink-100 px-2 pb-2">
+                            <span className="text-[11px] text-ink-700/60">Filter actions</span>
+                            <button type="button" onClick={() => setSelectedActivityActions([])} className="text-[11px] text-ink-700/60 hover:text-ink-900">Clear</button>
+                          </div>
+                          {ACTIVITY_ACTIONS.map((action) => (
+                            <label key={action} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-paper">
+                              <input
+                                type="checkbox"
+                                checked={selectedActivityActions.includes(action)}
+                                onChange={() => toggleSelection(action, selectedActivityActions, setSelectedActivityActions)}
+                              />
+                              <span>{action.replace(/_/g, ' ')}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-auto">
+                    <table className="w-full min-w-[760px] text-sm text-left">
+                      <thead className="sticky top-0 z-10 bg-white text-xs text-ink-700/70 shadow-sm">
+                        <tr>
+                          {([
+                            ['timestamp', 'When'],
+                            ['userEmail', 'User'],
+                            ['action', 'Action'],
+                            ['details', 'Details']
+                          ] as const).map(([key, label]) => (
+                            <th key={key} className="bg-white px-3 py-2 font-medium">
+                              <button type="button" onClick={() => toggleActivitySort(key)} className="hover:text-ink-900">
+                                {label} {activitySort.key === key ? (activitySort.direction === 'asc' ? '↑' : '↓') : '↕'}
+                              </button>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-ink-100">
+                        {visibleActivityRows.map((row, index) => (
+                          <tr key={`${row.timestamp}-${row.action}-${index}`} className="hover:bg-paper/70">
+                            <td className="whitespace-nowrap px-3 py-2 align-top">
+                              {new Date(row.timestamp).toLocaleString('en-IN', {
+                                timeZone: 'Asia/Kolkata',
+                                dateStyle: 'medium',
+                                timeStyle: 'short'
+                              })}
+                            </td>
+                            <td className="break-all px-3 py-2 align-top">{row.userEmail || '—'}</td>
+                            <td className="whitespace-nowrap px-3 py-2 align-top">{row.action.replace(/_/g, ' ')}</td>
+                            <td className="break-words px-3 py-2 align-top">{row.details || '—'}</td>
+                          </tr>
+                        ))}
+                        {visibleActivityRows.length === 0 && (
+                          <tr><td colSpan={4} className="px-3 py-8 text-center text-sm text-ink-700/60">No activity logs match these filters.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {dashboardSelection.kind !== 'branchActivity' && dashboardRowsQuery.data && dashboardRowsQuery.data.rows.length > 0 && (
                 <div className="flex h-full min-h-0 min-w-[900px] flex-col">
                   <table className="w-full table-fixed text-sm text-left">
                     <colgroup>

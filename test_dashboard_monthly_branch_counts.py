@@ -111,6 +111,73 @@ class DashboardMonthlyBranchCountTests(unittest.TestCase):
             [('BETA', 1)],
         )
 
+    def test_multiple_branch_and_workflow_filters_are_applied(self):
+        result = self._get_dashboard(
+            {'role': config.ROLE_ADMIN, 'branch': ''},
+            {'branches': ['ALPHA', 'BETA'], 'workflows': ['Inactive', 'Transfer']},
+        )
+
+        self.assertEqual(
+            result['charts']['monthlyBranchCount'],
+            [{'branch': 'BETA', 'count': 3}, {'branch': 'ALPHA', 'count': 1}],
+        )
+        self.assertEqual(
+            [entry['workflow'] for entry in result['charts']['workflowComparison']],
+            ['Inactive', 'Transfer'],
+        )
+        self.assertEqual(
+            [(entry['branch'], entry['count']) for entry in result['charts']['dailyBranchCount']],
+            [('ALPHA', 2), ('BETA', 1)],
+        )
+
+    def test_branch_activity_rows_match_chart_count_and_stay_branch_scoped(self):
+        with (
+            patch.object(dashboard, 'datetime', FixedDateTime),
+            patch.object(
+                dashboard,
+                'read_sheet_as_objects_',
+                side_effect=lambda sheet_name: self.sheets[sheet_name],
+            ),
+        ):
+            result = dashboard.get_dashboard_rows_(
+                {'role': config.ROLE_SCM, 'branch': 'ALPHA'},
+                {'metric': 'branchActivity', 'branch': 'BETA'},
+            )
+
+        self.assertEqual(result['total'], 2)
+        self.assertEqual([row['action'] for row in result['rows']], ['UPDATE', 'CREATE'])
+        self.assertEqual(
+            [row['details'] for row in result['rows']],
+            ['Updated reason for A-1', 'Submitted student A-1'],
+        )
+        self.assertTrue(all(row['branch'] == 'ALPHA' for row in result['rows']))
+
+    def test_monthly_branch_popup_returns_filtered_records(self):
+        with (
+            patch.object(dashboard, 'datetime', FixedDateTime),
+            patch.object(
+                dashboard,
+                'read_sheet_as_objects_',
+                side_effect=lambda sheet_name: self.sheets[sheet_name],
+            ),
+        ):
+            result = dashboard.get_dashboard_rows_(
+                {'role': config.ROLE_ADMIN, 'branch': ''},
+                {
+                    'metric': 'monthlyEntries',
+                    'branch': 'ALPHA',
+                    'workflows': ['Discontinue', 'Transfer'],
+                },
+            )
+
+        self.assertEqual(result['total'], 4)
+        self.assertEqual(
+            {workflow: sum(row['workflow'] == workflow for row in result['rows'])
+             for workflow in ('Discontinue', 'Transfer')},
+            {'Discontinue': 3, 'Transfer': 1},
+        )
+        self.assertTrue(all(row['branch'] == 'ALPHA' for row in result['rows']))
+
     def test_branch_workflow_table_uses_the_requested_order(self):
         self.sheets[config.SHEET_RESPONSE] = [
             {'Branch': 'KOTTAYAM', 'Status': config.STATUS_PENDING_HOF_MANAGER},

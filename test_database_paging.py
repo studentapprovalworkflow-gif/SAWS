@@ -42,6 +42,28 @@ class DatabasePagingTests(unittest.TestCase):
             10, 20,
         ))
 
+    def test_sheet_page_supports_multi_value_filters(self):
+        with patch.object(
+            db_utils,
+            'fetch_all_',
+            return_value=[{'total': 0, 'id': None, 'data': None}],
+        ) as fetch:
+            db_utils.query_sheet_page_(
+                config.SHEET_RESPONSE,
+                filters=[
+                    ('Branch', 'in', ['MANJERI', 'KASARGODE']),
+                    ('Status', 'in', ['PENDING_ADMIN', 'PENDING_SCM']),
+                ],
+            )
+
+        query, params = fetch.call_args.args
+        self.assertIn("data->>%s IN (%s, %s)", query)
+        self.assertEqual(params[:7], (
+            config.SHEET_RESPONSE,
+            'Branch', 'MANJERI', 'KASARGODE',
+            'Status', 'PENDING_ADMIN', 'PENDING_SCM',
+        ))
+
     def test_workflow_page_keeps_role_scope_and_admin_active_filter_in_sql(self):
         page = {
             'total': 1,
@@ -69,6 +91,50 @@ class DatabasePagingTests(unittest.TestCase):
             ('id', '', 'ASC'),
         ])
 
+    def test_workflow_page_applies_multiple_branches(self):
+        with patch.object(
+            db_utils,
+            'query_sheet_page_',
+            return_value={'total': 0, 'rows': []},
+        ) as query:
+            db_utils.query_workflow_page_(
+                config.SHEET_INACTIVE_COMPLETED,
+                {'role': config.ROLE_ADMIN, 'branch': ''},
+                {'branches': ['MANJERI', 'KASARGODE']},
+                True,
+                config.STATUS_INACTIVE_PENDING_ADMIN,
+                {},
+            )
+
+        self.assertIn(
+            ('Branch', 'in', ['MANJERI', 'KASARGODE']),
+            query.call_args.kwargs['filters'],
+        )
+
+    def test_workflow_page_keeps_non_global_user_on_own_branch(self):
+        with patch.object(
+            db_utils,
+            'query_sheet_page_',
+            return_value={'total': 0, 'rows': []},
+        ) as query:
+            db_utils.query_workflow_page_(
+                config.SHEET_TRANSFER_COMPLETED,
+                {'role': config.ROLE_SCM, 'branch': 'MANJERI'},
+                {'branches': ['KASARGODE']},
+                True,
+                config.STATUS_TRANSFER_PENDING_ADMIN,
+                {},
+            )
+
+        self.assertIn(
+            ('Branch', 'eq', 'MANJERI'),
+            query.call_args.kwargs['filters'],
+        )
+        self.assertNotIn(
+            ('Branch', 'in', ['KASARGODE']),
+            query.call_args.kwargs['filters'],
+        )
+
     def test_student_page_returns_role_filtered_rows_without_aggregate_pending_count(self):
         raw_row = {
             'MID': 'MID1',
@@ -94,6 +160,57 @@ class DatabasePagingTests(unittest.TestCase):
         self.assertTrue(result['rows'][0]['Awaiting My Action'])
         self.assertNotIn('pendingForMe', result)
         self.assertIn(('Branch', 'eq', 'TIRUR'), query.call_args.kwargs['filters'])
+
+    def test_student_page_applies_multiple_branch_and_status_filters(self):
+        with (
+            patch.object(students, 'query_sheet_page_', return_value={'total': 0, 'rows': []}) as query,
+            patch.object(students, 'fetch_all_', return_value=[]),
+        ):
+            result = students.list_students_(
+                {'role': config.ROLE_ADMIN, 'branch': ''},
+                config.SHEET_RESPONSE,
+                {
+                    'branches': ['MANJERI', 'KASARGODE'],
+                    'statuses': [config.STATUS_PENDING_ADMIN, config.STATUS_PENDING_SCM],
+                },
+            )
+
+        self.assertEqual(result['total'], 0)
+        self.assertIn(
+            ('Branch', 'in', ['MANJERI', 'KASARGODE']),
+            query.call_args.kwargs['filters'],
+        )
+        self.assertIn(
+            ('Status', 'in', [config.STATUS_PENDING_ADMIN, config.STATUS_PENDING_SCM]),
+            query.call_args.kwargs['filters'],
+        )
+
+    def test_student_fallback_page_applies_multi_select_filters(self):
+        rows = [
+            {'MID': 'M1', 'Branch': 'MANJERI', 'Status': config.STATUS_PENDING_ADMIN,
+             'Entry Date': '2026-11-10', 'Student Name': 'One'},
+            {'MID': 'M2', 'Branch': 'KASARGODE', 'Status': config.STATUS_PENDING_SCM,
+             'Entry Date': '2026-11-11', 'Student Name': 'Two'},
+            {'MID': 'M3', 'Branch': 'CALICUT', 'Status': config.STATUS_PENDING_ADMIN,
+             'Entry Date': '2026-11-12', 'Student Name': 'Three'},
+            {'MID': 'M4', 'Branch': 'MANJERI', 'Status': config.STATUS_PENDING_HOF_MANAGER,
+             'Entry Date': '2026-11-13', 'Student Name': 'Four'},
+        ]
+        with (
+            patch.object(students, 'read_sheet_as_objects_', return_value=rows),
+            patch.object(students, 'fetch_all_', return_value=[]),
+        ):
+            result = students.list_students_(
+                {'role': config.ROLE_ADMIN, 'branch': ''},
+                config.SHEET_RESPONSE,
+                {
+                    'branches': ['MANJERI', 'KASARGODE'],
+                    'statuses': [config.STATUS_PENDING_ADMIN, config.STATUS_PENDING_SCM],
+                    'entryDateFrom': '2026-11-01',
+                },
+            )
+
+        self.assertEqual({row['MID'] for row in result['rows']}, {'M1', 'M2'})
 
     def test_cleanup_candidate_query_selects_only_requested_fields(self):
         candidate = {'MID': 'MID1', 'Approval Date': '2025-01-01T10:00:00'}

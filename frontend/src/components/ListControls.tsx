@@ -27,21 +27,23 @@ export const ALL_ROWS_PAGE_SIZE = 9999;
 export const STICKY_HEAD_CLASS =
   '[&_th]:sticky [&_th]:top-0 [&_th]:z-[1] [&_th]:bg-white [&_th]:[box-shadow:inset_0_-1px_0_theme(colors.ink.100)]';
 
-/** Each option row is h-9 (36px), so 180px shows exactly 5 branches at a time. */
-const BRANCH_LIST_MAX_HEIGHT = 'max-h-[180px]';
+export interface MultiSelectOption {
+  value: string;
+  label: string;
+}
 
-/**
- * Branch dropdown. "All branches" stays pinned at the top; the branch list
- * under it shows 5 branches at a time and scrolls for the rest.
- */
-export function BranchFilter({
+export function MultiSelectFilter({
   value,
   onChange,
-  branches
+  options,
+  allLabel,
+  className = 'w-56'
 }: {
-  value: string;
-  onChange: (branch: string) => void;
-  branches: string[];
+  value: string[];
+  onChange: (values: string[]) => void;
+  options: MultiSelectOption[];
+  allLabel: string;
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -62,60 +64,87 @@ export function BranchFilter({
     };
   }, [open]);
 
-  function pick(branch: string) {
-    onChange(branch);
-    setOpen(false);
+  function toggle(option: string) {
+    onChange(value.includes(option)
+      ? value.filter((selected) => selected !== option)
+      : [...value, option]);
   }
+
+  const selectedLabel = value.length === 0
+    ? allLabel
+    : value.length === 1
+      ? options.find((option) => option.value === value[0])?.label || value[0]
+      : `${value.length} selected`;
 
   return (
     <div className="relative" ref={rootRef}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-haspopup="listbox"
         aria-expanded={open}
-        className="flex w-56 items-center justify-between gap-2 rounded-md border border-ink-200 bg-white px-4 py-2 text-sm text-ink-700/80 hover:bg-paper transition-colors"
+        className={`flex ${className} items-center justify-between gap-2 rounded-md border border-ink-200 bg-white px-4 py-2 text-sm text-ink-700/80 hover:bg-paper transition-colors`}
       >
-        <span className="truncate">{value || 'All branches'}</span>
+        <span className="truncate">{selectedLabel}</span>
         <ChevronDown size={14} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
         <div
-          role="listbox"
-          className="absolute left-0 z-20 mt-2 w-56 overflow-hidden rounded-md border border-ink-100 bg-white shadow-panel"
+          role="group"
+          aria-label={allLabel}
+          className="absolute left-0 z-30 mt-2 w-full min-w-56 overflow-hidden rounded-md border border-ink-100 bg-white shadow-panel"
         >
           <button
             type="button"
-            role="option"
-            aria-selected={!value}
-            onClick={() => pick('')}
+            onClick={() => {
+              onChange([]);
+              setOpen(false);
+            }}
             className="flex h-9 w-full items-center justify-between border-b border-ink-100 px-3 text-left text-sm hover:bg-paper transition-colors"
           >
-            <span className={!value ? 'font-medium' : ''}>All branches</span>
-            {!value && <Check size={14} className="text-ink-700/60" />}
+            <span className={value.length === 0 ? 'font-medium' : ''}>{allLabel}</span>
+            {value.length === 0 && <Check size={14} className="text-ink-700/60" />}
           </button>
-          <div className={`${BRANCH_LIST_MAX_HEIGHT} overflow-y-auto`}>
-            {branches.map((b) => (
-              <button
-                key={b}
-                type="button"
-                role="option"
-                aria-selected={value === b}
-                onClick={() => pick(b)}
-                className="flex h-9 w-full items-center justify-between px-3 text-left text-sm hover:bg-paper transition-colors"
+          <div className="max-h-48 overflow-y-auto p-1">
+            {options.map((option) => (
+              <label
+                key={option.value}
+                className="flex min-h-9 cursor-pointer items-center gap-2 rounded px-3 py-1.5 text-sm hover:bg-paper"
               >
-                <span className={`truncate ${value === b ? 'font-medium' : ''}`}>{b}</span>
-                {value === b && <Check size={14} className="shrink-0 text-ink-700/60" />}
-              </button>
+                <input
+                  type="checkbox"
+                  checked={value.includes(option.value)}
+                  onChange={() => toggle(option.value)}
+                />
+                <span className="truncate">{option.label}</span>
+              </label>
             ))}
-            {branches.length === 0 && (
-              <p className="px-3 py-2 text-sm text-ink-700/50">No branches found.</p>
+            {options.length === 0 && (
+              <p className="px-3 py-2 text-sm text-ink-700/50">No options found.</p>
             )}
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+export function BranchFilter({
+  value,
+  onChange,
+  branches
+}: {
+  value: string[];
+  onChange: (branches: string[]) => void;
+  branches: string[];
+}) {
+  return (
+    <MultiSelectFilter
+      value={value}
+      onChange={onChange}
+      options={branches.map((branch) => ({ value: branch, label: branch }))}
+      allLabel="All branches"
+    />
   );
 }
 

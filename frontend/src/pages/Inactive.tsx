@@ -491,7 +491,7 @@ export default function Inactive() {
     searchParams.get('tab') === 'completed' ? 'completed' : 'active'
   );
   const [search, setSearch] = useState(searchParams.get('search') || '');
-  const [branchFilter, setBranchFilter] = useState('');
+  const [branchFilters, setBranchFilters] = useState<string[]>([]);
   const [batchFilter, setBatchFilter] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSizeOption>(DEFAULT_PAGE_SIZE);
@@ -559,14 +559,14 @@ export default function Inactive() {
   const params = useMemo(
     () => ({
       search: search.trim() || undefined,
-      branch: branchFilter || undefined,
+      branches: branchFilters.length ? branchFilters : undefined,
       batch: batchFilter || undefined,
       sortBy: sortBy || undefined,
       sortDir: sortBy ? sortDir : undefined,
       page,
       pageSize: effectivePageSize
     }),
-    [search, branchFilter, batchFilter, sortBy, sortDir, page, effectivePageSize]
+    [search, branchFilters, batchFilter, sortBy, sortDir, page, effectivePageSize]
   );
 
   const listQuery = useQuery({
@@ -705,7 +705,7 @@ export default function Inactive() {
       do {
         const result = await listInactive(source, {
           search: search.trim() || undefined,
-          branch: branchFilter || undefined,
+          branches: branchFilters.length ? branchFilters : undefined,
           batch: batchFilter || undefined,
           page: exportPage,
           pageSize: 200
@@ -828,9 +828,9 @@ export default function Inactive() {
 
         {canExport && (
           <BranchFilter
-            value={branchFilter}
-            onChange={(b) => {
-              setBranchFilter(b);
+            value={branchFilters}
+            onChange={(branches) => {
+              setBranchFilters(branches);
               setPage(1);
             }}
             branches={branchesQuery.data || []}
@@ -847,11 +847,11 @@ export default function Inactive() {
           />
         )}
 
-        {(search || branchFilter || batchFilter) && (
+        {(search || branchFilters.length > 0 || batchFilter) && (
           <button
             onClick={() => {
               setSearch('');
-              setBranchFilter('');
+              setBranchFilters([]);
               setBatchFilter('');
               setPage(1);
               const next = new URLSearchParams(searchParams);

@@ -19,7 +19,7 @@ from db_utils import (
     read_sheet_as_objects_, append_row_, update_row_fields_, delete_row_,
     invalidate_cache_, now_iso_, format_date_only_, screenshot_keys_, collect_screenshot_keys_,
     mid_exists_anywhere_, convert_inactive_row_to_discontinue_,
-    validate_phone_numbers_, query_workflow_page_,
+    validate_phone_numbers_, query_workflow_page_, selection_values_,
 )
 from auth import ApiError, require_role_
 from audit_log import log_audit_
@@ -242,6 +242,10 @@ def submit_inactive_(user, payload):
 def list_inactive_(user, completed=False, params=None):
     """List active or approved inactive requests visible to the signed-in user."""
     params = params or {}
+    try:
+        selection_values_(params, 'branches', 'branch')
+    except ValueError as exc:
+        raise ApiError('BAD_REQUEST') from exc
     sheet = config.SHEET_INACTIVE_COMPLETED if completed else config.SHEET_INACTIVE_RESPONSE
     result = query_workflow_page_(
         sheet,

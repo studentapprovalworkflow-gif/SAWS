@@ -464,6 +464,8 @@ export async function adminUpdateStudent(
 
 export interface InactiveListParams {
   search?: string;
+  branches?: string[];
+  /** @deprecated Use branches for a multi-select filter. */
   branch?: string;
   /** Simple text-match filter on 'Batch Name'. */
   batch?: string;

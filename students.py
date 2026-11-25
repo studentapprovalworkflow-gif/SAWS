@@ -19,7 +19,7 @@ import storage
 from db_utils import (
     read_sheet_as_objects_, append_row_, update_row_fields_, delete_row_,
     invalidate_cache_, now_iso_, format_date_only_, mid_exists_anywhere_, validate_phone_numbers_,
-    screenshot_keys_, collect_screenshot_keys_, query_sheet_page_, fetch_all_,
+    screenshot_keys_, collect_screenshot_keys_, query_sheet_page_, fetch_all_, selection_values_,
 )
 from auth import ApiError, require_role_
 from audit_log import log_audit_
@@ -739,10 +739,13 @@ def _list_students_page_from_db_(user, sheet_name, params):
     filters = []
     if user.get('role') not in config.GLOBAL_VISIBILITY_ROLES:
         filters.append(('Branch', 'eq', user.get('branch') or ''))
-    elif params.get('branch'):
-        filters.append(('Branch', 'eq', params['branch']))
-    if params.get('status'):
-        filters.append(('Status', 'eq', params['status']))
+    else:
+        branches = selection_values_(params, 'branches', 'branch')
+        if branches:
+            filters.append(('Branch', 'in', branches))
+    statuses = selection_values_(params, 'statuses', 'status')
+    if statuses:
+        filters.append(('Status', 'in', statuses))
     if params.get('mid'):
         filters.append(('MID', 'contains_case_sensitive', params['mid']))
     if params.get('studentName'):
@@ -786,6 +789,11 @@ def _list_students_page_from_db_(user, sheet_name, params):
 def list_students_(user, sheet_name, params):
     """List entries visible to this user, with optional search/filter params."""
     params = params or {}
+    try:
+        selection_values_(params, 'branches', 'branch')
+        selection_values_(params, 'statuses', 'status')
+    except ValueError as exc:
+        raise ApiError('BAD_REQUEST') from exc
     optimized_result = _list_students_page_from_db_(user, sheet_name, params)
     if optimized_result is not None:
         return optimized_result
@@ -821,10 +829,12 @@ def list_students_(user, sheet_name, params):
         q = params['phone']
         rows = [r for r in rows if any(q in str(r.get(p, '')) for p in
                                         ['Phone Number 1', 'Phone Number 2', 'Phone Number 3'])]
-    if params.get('status'):
-        rows = [r for r in rows if r.get('Status') == params['status']]
-    if params.get('branch') and user['role'] in config.GLOBAL_VISIBILITY_ROLES:
-        rows = [r for r in rows if r.get('Branch') == params['branch']]
+    statuses = selection_values_(params, 'statuses', 'status')
+    branches = selection_values_(params, 'branches', 'branch')
+    if statuses:
+        rows = [r for r in rows if r.get('Status') in statuses]
+    if branches and user['role'] in config.GLOBAL_VISIBILITY_ROLES:
+        rows = [r for r in rows if r.get('Branch') in branches]
     if params.get('batch'):
         q = str(params['batch']).strip().lower()
         if q:

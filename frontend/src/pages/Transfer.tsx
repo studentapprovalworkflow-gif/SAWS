@@ -307,7 +307,7 @@ function TransferDetailsModal({
 export default function Transfer() {
   const {user}=useAuth(); const qc=useQueryClient(); const [sp,setSp]=useSearchParams();
   const [tab,setTab]=useState<'active'|'completed'>(sp.get('tab')==='completed'?'completed':'active');
-  const [search,setSearch]=useState(sp.get('search')||''); const [branchFilter,setBranchFilter]=useState(''); const [batchFilter,setBatchFilter]=useState('');
+  const [search,setSearch]=useState(sp.get('search')||''); const [branchFilters,setBranchFilters]=useState<string[]>([]); const [batchFilter,setBatchFilter]=useState('');
   const [page,setPage]=useState(1); const [pageSize,setPageSize]=useState<PageSizeOption>(DEFAULT_PAGE_SIZE);
   const effectivePageSize=pageSize==='all'?ALL_ROWS_PAGE_SIZE:pageSize;
   const [sortBy,setSortBy]=useState(''); const [sortDir,setSortDir]=useState<'asc'|'desc'>('asc');
@@ -317,7 +317,7 @@ export default function Transfer() {
   const [deleteTarget,setDeleteTarget]=useState<TransferEntry|null>(null); const [deleteConfirmText,setDeleteConfirmText]=useState(''); const [selectedTransfer,setSelectedTransfer]=useState<TransferEntry|null>(null); const [error,setError]=useState<string|null>(null); const [exporting,setExporting]=useState(false);
 
   React.useEffect(()=>{const t=sp.get('tab')==='completed'?'completed':'active';if(t!==tab){setTab(t);setPage(1)} const q=sp.get('search')||'';if(q!==search){setSearch(q);setPage(1)}},[sp]); // eslint-disable-line react-hooks/exhaustive-deps
-  const params=useMemo(()=>({search:search.trim()||undefined,branch:branchFilter||undefined,batch:batchFilter||undefined,sortBy:sortBy||undefined,sortDir:sortBy?sortDir:undefined,page,pageSize:effectivePageSize}),[search,branchFilter,batchFilter,sortBy,sortDir,page,effectivePageSize]);
+  const params=useMemo(()=>({search:search.trim()||undefined,branches:branchFilters.length?branchFilters:undefined,batch:batchFilter||undefined,sortBy:sortBy||undefined,sortDir:sortBy?sortDir:undefined,page,pageSize:effectivePageSize}),[search,branchFilters,batchFilter,sortBy,sortDir,page,effectivePageSize]);
   const showWorkflowFields=user?.role==='Admin'||user?.role==='Head Office';
   const branchesQuery=useQuery({queryKey:['branches'],queryFn:listBranches,enabled:user?.role==='Admin'||user?.role==='Head Office'});
   const query=useQuery({queryKey:['transfer',tab,params],queryFn:()=>listTransfer(tab==='completed'?'completed':'response',params),enabled:!!user});
@@ -350,7 +350,7 @@ export default function Transfer() {
     if(!canExport) return; setExporting(true); setError(null);
     try {
       const all:TransferEntry[]=[]; let pg=1; let totalRows=0;
-      do { const r=await listTransfer(tab==='completed'?'completed':'response',{search:search.trim()||undefined,branch:branchFilter||undefined,batch:batchFilter||undefined,page:pg,pageSize:200}); all.push(...r.rows); totalRows=r.total; pg++; if(!r.rows.length)break; } while(all.length<totalRows);
+      do { const r=await listTransfer(tab==='completed'?'completed':'response',{search:search.trim()||undefined,branches:branchFilters.length?branchFilters:undefined,batch:batchFilter||undefined,page:pg,pageSize:200}); all.push(...r.rows); totalRows=r.total; pg++; if(!r.rows.length)break; } while(all.length<totalRows);
       if(!all.length){setError('There are no records to download for the current filters.');return;}
       const out=all.map(r=>({'Sl No':r['Sl No'],Branch:r.Branch,MID:r.MID,'Student Name':r['Student Name'],'Phone Number 1':r['Phone Number 1'],'Phone Number 2':r['Phone Number 2']||'','Phone Number 3':r['Phone Number 3']||'','Transfer To Branch':r['Transfer To Branch'],Reason:r.Reason,Status:transferStatusDisplay(r),'Entry Date':r['Entry Date']||'','Head Office Decision':r['Head Office Decision']||'','Head Office Name':r['Head Office Name']||'','Head Office Date':r['Head Office Date']||'','Admin Approval':r['Admin Approval']||'','Admin Name':r['Admin Name']||'','Approval Date':r['Approval Date']||'','Last Rejection Reason':r['Last Rejection Reason']||'','Last Rejected By':r['Last Rejected By']||'','Last Rejected Stage':r['Last Rejected Stage']||'','Last Rejected Date':r['Last Rejected Date']||''}));
       const base=`transfer_${tab==='completed'?'approved':'active'}_${new Date().toISOString().slice(0,10)}`;
@@ -394,8 +394,8 @@ export default function Transfer() {
 
       {canExport && (
         <BranchFilter
-          value={branchFilter}
-          onChange={(b)=>{setBranchFilter(b);setPage(1)}}
+          value={branchFilters}
+          onChange={(branches)=>{setBranchFilters(branches);setPage(1)}}
           branches={branchesQuery.data||[]}
         />
       )}
@@ -407,9 +407,9 @@ export default function Transfer() {
         />
       )}
 
-      {(search || branchFilter || batchFilter) && (
+      {(search || branchFilters.length>0 || batchFilter) && (
         <button
-          onClick={()=>{setSearch('');setBranchFilter('');setBatchFilter('');setPage(1);const n=new URLSearchParams(sp);n.delete('search');setSp(n,{replace:true})}}
+          onClick={()=>{setSearch('');setBranchFilters([]);setBatchFilter('');setPage(1);const n=new URLSearchParams(sp);n.delete('search');setSp(n,{replace:true})}}
           className="flex items-center gap-1 text-sm text-ink-700/50 hover:text-ink-700 transition-colors px-1"
         >
           <X size={13} />

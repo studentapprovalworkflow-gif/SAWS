@@ -2,8 +2,8 @@ const AUTH_SESSION_KEY = 'sdms_session';
 const OVERVIEW_FILTERS_KEY = 'sdms_overview_filters';
 
 export interface OverviewFilters {
-  branch: string;
-  workflow: string;
+  branches: string[];
+  workflows: string[];
   dateFrom: string;
   dateTo: string;
 }
@@ -23,17 +23,23 @@ function storageForCurrentSession(): Storage {
 
 export function readOverviewFilters(): OverviewFilters {
   const raw = storageForCurrentSession().getItem(OVERVIEW_FILTERS_KEY);
-  if (!raw) return { branch: '', workflow: '', dateFrom: '', dateTo: '' };
+  if (!raw) return { branches: [], workflows: [], dateFrom: '', dateTo: '' };
   try {
-    const filters = JSON.parse(raw) as Partial<OverviewFilters>;
+    const filters = JSON.parse(raw) as Record<string, unknown>;
+    const readValues = (pluralKey: string, legacyKey: string) => {
+      const current = filters[pluralKey];
+      if (Array.isArray(current)) return current.filter((value): value is string => typeof value === 'string');
+      const legacy = filters[legacyKey];
+      return typeof legacy === 'string' && legacy ? [legacy] : [];
+    };
     return {
-      branch: typeof filters.branch === 'string' ? filters.branch : '',
-      workflow: typeof filters.workflow === 'string' ? filters.workflow : '',
+      branches: readValues('branches', 'branch'),
+      workflows: readValues('workflows', 'workflow'),
       dateFrom: typeof filters.dateFrom === 'string' ? filters.dateFrom : '',
       dateTo: typeof filters.dateTo === 'string' ? filters.dateTo : ''
     };
   } catch {
-    return { branch: '', workflow: '', dateFrom: '', dateTo: '' };
+    return { branches: [], workflows: [], dateFrom: '', dateTo: '' };
   }
 }
 

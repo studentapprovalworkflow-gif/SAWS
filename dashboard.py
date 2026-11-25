@@ -30,6 +30,42 @@ def _parse_audit_dt(value, local_timezone):
     return parsed.astimezone(local_timezone)
 
 
+def _selection_values_(params, plural_key, singular_key, allowed_values=None):
+    raw = params.get(plural_key)
+    if raw is None:
+        raw = params.get(singular_key)
+    if raw is None or raw == '':
+        return []
+    if isinstance(raw, str):
+        values = [raw]
+    elif isinstance(raw, list):
+        values = raw
+    else:
+        raise ApiError('BAD_REQUEST')
+
+    selected = []
+    for value in values:
+        if not isinstance(value, str):
+            raise ApiError('BAD_REQUEST')
+        value = value.strip()
+        if not value:
+            continue
+        if allowed_values is not None and value not in allowed_values:
+            raise ApiError('BAD_REQUEST')
+        if value not in selected:
+            selected.append(value)
+    return selected
+
+
+def _is_selected_branch_(row, branch_keys, require_branch=False):
+    if require_branch and not branch_keys:
+        return False
+    return (
+        not branch_keys
+        or str(row.get('Branch') or '').strip().casefold() in branch_keys
+    )
+
+
 def _in_date_range(row, date_from=None, date_to=None):
     if not date_from and not date_to:
         return True
@@ -55,15 +91,22 @@ def _short_status_label(workflow_name, status):
 def get_dashboard_data_(user, params=None):
     params = params or {}
     is_global = user['role'] in config.GLOBAL_VISIBILITY_ROLES
-    requested_branch = str(params.get('branch') or '').strip() if is_global else str(user.get('branch') or '').strip()
+    available_workflows = ('Discontinue', 'Inactive', 'Transfer')
+    requested_branches = (
+        _selection_values_(params, 'branches', 'branch')
+        if is_global else [str(user.get('branch') or '').strip()]
+    )
+    requested_branches = [branch for branch in requested_branches if branch]
+    requested_branch_keys = {branch.casefold() for branch in requested_branches}
     date_from = params.get('dateFrom')
     date_to = params.get('dateTo')
-    available_workflows = ('Discontinue', 'Inactive', 'Transfer')
-    requested_workflow = str(params.get('workflow') or '').strip()
-    if requested_workflow and requested_workflow not in available_workflows:
-        raise ApiError('BAD_REQUEST')
-    selected_workflows = (requested_workflow,) if requested_workflow else available_workflows
-    cache_key = None if date_from or date_to or requested_workflow or (is_global and requested_branch) else ('dashboard_ALL' if is_global else 'dashboard_' + requested_branch)
+    requested_workflows = _selection_values_(
+        params, 'workflows', 'workflow', available_workflows
+    )
+    selected_workflows = tuple(requested_workflows) if requested_workflows else available_workflows
+    cache_key = None if (
+        date_from or date_to or requested_workflows or (is_global and requested_branches)
+    ) else ('dashboard_ALL' if is_global else 'dashboard_' + str(user.get('branch') or '').strip())
 
     def producer():
         sources = {
@@ -79,7 +122,10 @@ def get_dashboard_data_(user, params=None):
         }
 
         def scoped(rows):
-            rows = rows if is_global and not requested_branch else [r for r in rows if r.get('Branch') == requested_branch]
+            rows = [
+                r for r in rows
+                if _is_selected_branch_(r, requested_branch_keys, require_branch=not is_global)
+            ]
             return [r for r in rows if _in_date_range(r, date_from, date_to)]
 
         workflow_rows = {}
@@ -185,9 +231,11 @@ def get_dashboard_data_(user, params=None):
             active, completed, _ = sources[name]
             for row in active + completed:
                 branch = str(row.get('Branch') or 'Unknown').strip() or 'Unknown'
-                if not is_global and branch != requested_branch:
+                if not _is_selected_branch_(
+                    {'Branch': branch}, requested_branch_keys, require_branch=not is_global
+                ):
                     continue
-                if is_global and requested_branch and branch != requested_branch:
+                if not _in_date_range(row, date_from, date_to):
                     continue
                 entry_date = _parse_dt(row.get('Entry Date'))
                 if not entry_date:
@@ -207,7 +255,9 @@ def get_dashboard_data_(user, params=None):
             branch_key = ' '.join(branch.replace('_', ' ').replace('-', ' ').upper().split())
             if branch_key in {'HEAD OFFICE', 'UNKNOWN'}:
                 continue
-            if requested_branch and branch.casefold() != requested_branch.casefold():
+            if not _is_selected_branch_(
+                {'Branch': branch}, requested_branch_keys, require_branch=not is_global
+            ):
                 continue
 
             activity_time = _parse_audit_dt(log.get('Timestamp'), local_timezone)
@@ -228,14 +278,14 @@ def get_dashboard_data_(user, params=None):
                     branch_workflow_count['total'] += 1
 
         branch_names = set(branch_workflow_counts)
-        if is_global and not requested_branch:
+        if is_global and not requested_branches:
             branch_names.update(
                 str(branch.get('name') or '').strip()
                 for branch in list_branches_(False)
                 if str(branch.get('name') or '').strip()
             )
-        elif requested_branch:
-            branch_names.add(requested_branch)
+        else:
+            branch_names.update(requested_branches)
         branch_workflow_count = [
             {'branch': branch, 'workflows': {
                 name: branch_workflow_counts.get(branch, {}).get(
@@ -254,14 +304,14 @@ def get_dashboard_data_(user, params=None):
             )
         ]
         monthly_branch_names = set(monthly_branch_counts)
-        if is_global and not requested_branch:
+        if is_global and not requested_branches:
             monthly_branch_names.update(
                 str(branch.get('name') or '').strip()
                 for branch in list_branches_(False)
                 if str(branch.get('name') or '').strip()
             )
-        elif requested_branch:
-            monthly_branch_names.add(requested_branch)
+        else:
+            monthly_branch_names.update(requested_branches)
         monthly_branch_count = [
             {'branch': branch, 'count': monthly_branch_counts.get(branch, 0)}
             for branch in sorted(
@@ -272,7 +322,10 @@ def get_dashboard_data_(user, params=None):
         ]
 
         return {
-            'scope': {'branch': requested_branch or 'All branches', 'global': is_global},
+            'scope': {
+                'branch': ', '.join(requested_branches) if requested_branches else 'All branches',
+                'global': is_global,
+            },
             'cards': cards,
             'charts': {
                 'monthlyTrend': monthly_trend,
@@ -294,20 +347,60 @@ def get_dashboard_rows_(user, params=None):
     metric = str(params.get('metric') or '')
     supported_metrics = {
         'pending', 'awaitingHeadOffice', 'awaitingAdminApproval', 'approved',
-        'rejected', 'todaysEntries', 'monthlyEntries', 'statusDistribution',
+        'rejected', 'todaysEntries', 'monthlyEntries', 'statusDistribution', 'branchActivity',
     }
     if metric not in supported_metrics:
         raise ApiError('BAD_REQUEST')
 
     is_global = user['role'] in config.GLOBAL_VISIBILITY_ROLES
-    requested_branch = str(params.get('branch') or '').strip() if is_global else str(user.get('branch') or '').strip()
-    requested_workflow = str(params.get('workflow') or '').strip()
+    requested_branches = (
+        _selection_values_(params, 'branches', 'branch')
+        if is_global else [str(user.get('branch') or '').strip()]
+    )
+    requested_branches = [branch for branch in requested_branches if branch]
+    requested_branch_keys = {branch.casefold() for branch in requested_branches}
     available_workflows = ('Discontinue', 'Inactive', 'Transfer')
+    requested_workflows = _selection_values_(
+        params, 'workflows', 'workflow', available_workflows
+    )
+    selected_workflows = tuple(requested_workflows) if requested_workflows else available_workflows
+    requested_workflow = str(params.get('workflow') or '').strip()
+    requested_status = str(params.get('status') or '').strip()
     if requested_workflow and requested_workflow not in available_workflows:
         raise ApiError('BAD_REQUEST')
-    requested_status = str(params.get('status') or '').strip()
     if metric == 'statusDistribution' and (not requested_workflow or not requested_status):
         raise ApiError('BAD_REQUEST')
+
+    if metric == 'branchActivity':
+        if len(requested_branches) != 1:
+            raise ApiError('BAD_REQUEST')
+        local_timezone = ZoneInfo(config.BACKUP_TIMEZONE)
+        today_local = datetime.now(local_timezone).date()
+        activity_rows = []
+        tracked_actions = {'CREATE', 'UPDATE', 'STAGE_TRANSITION'}
+        for log in read_sheet_as_objects_(config.SHEET_AUDITLOGS):
+            action = str(log.get('Action') or '').strip().upper()
+            branch = str(log.get('Branch') or '').strip()
+            branch_key = ' '.join(branch.replace('_', ' ').replace('-', ' ').upper().split())
+            if (
+                action not in tracked_actions
+                or not branch
+                or branch_key in {'HEAD OFFICE', 'UNKNOWN'}
+                or branch.casefold() not in requested_branch_keys
+            ):
+                continue
+            activity_time = _parse_audit_dt(log.get('Timestamp'), local_timezone)
+            if not activity_time or activity_time.date() != today_local:
+                continue
+            activity_rows.append({
+                'timestamp': activity_time.isoformat(timespec='seconds'),
+                'userEmail': str(log.get('User Email') or ''),
+                'action': action,
+                'details': str(log.get('Details') or ''),
+                'branch': branch,
+            })
+        activity_rows.sort(key=lambda row: row['timestamp'], reverse=True)
+        return {'total': len(activity_rows), 'rows': activity_rows}
 
     pending_statuses = {
         config.STATUS_PENDING_HOF_MANAGER, config.STATUS_WAITING_FOR_HOF, config.STATUS_WAITING_FOR_MANAGER,
@@ -338,7 +431,11 @@ def get_dashboard_rows_(user, params=None):
         'Inactive': (config.SHEET_INACTIVE_RESPONSE, config.SHEET_INACTIVE_COMPLETED),
         'Transfer': (config.SHEET_TRANSFER_RESPONSE, config.SHEET_TRANSFER_COMPLETED),
     }
-    for workflow in ((requested_workflow,) if requested_workflow else available_workflows):
+    workflows_to_load = (
+        (requested_workflow,) if metric == 'statusDistribution'
+        else selected_workflows
+    )
+    for workflow in workflows_to_load:
         active_sheet, completed_sheet = sources[workflow]
         active = read_sheet_as_objects_(active_sheet)
         completed = read_sheet_as_objects_(completed_sheet)
@@ -358,9 +455,7 @@ def get_dashboard_rows_(user, params=None):
             scoped_rows = [(row, 'active') for row in active]
 
         for row, sheet in scoped_rows:
-            if not is_global and row.get('Branch') != requested_branch:
-                continue
-            if is_global and requested_branch and row.get('Branch') != requested_branch:
+            if not _is_selected_branch_(row, requested_branch_keys, require_branch=not is_global):
                 continue
             if not _in_date_range(row, params.get('dateFrom'), params.get('dateTo')):
                 continue
@@ -407,11 +502,16 @@ def get_dashboard_export_data_(user, params=None):
     require_role_(user, allowed_roles)
 
     is_global = user['role'] in config.GLOBAL_VISIBILITY_ROLES
-    requested_branch = str(params.get('branch') or '').strip() if is_global else str(user.get('branch') or '').strip()
-    requested_workflow = str(params.get('workflow') or '').strip()
+    requested_branches = (
+        _selection_values_(params, 'branches', 'branch')
+        if is_global else [str(user.get('branch') or '').strip()]
+    )
+    requested_branches = [branch for branch in requested_branches if branch]
+    requested_branch_keys = {branch.casefold() for branch in requested_branches}
     available_workflows = ('Discontinue', 'Inactive', 'Transfer')
-    if requested_workflow and requested_workflow not in available_workflows:
-        raise ApiError('BAD_REQUEST')
+    requested_workflows = _selection_values_(
+        params, 'workflows', 'workflow', available_workflows
+    )
 
     columns = [
         'Workflow', 'Record Set', 'Status', 'Sl No', 'Branch', 'MID', 'Student Name',
@@ -443,7 +543,7 @@ def get_dashboard_export_data_(user, params=None):
                 'Discontinue Converted Date': inactive_row.get('Converted Date') or '',
             }
 
-    workflows = (requested_workflow,) if requested_workflow else available_workflows
+    workflows = tuple(requested_workflows) if requested_workflows else available_workflows
     rows = []
     for workflow in workflows:
         active_sheet, completed_sheet = sources[workflow]
@@ -455,9 +555,9 @@ def get_dashboard_export_data_(user, params=None):
 
         for record_set, source_rows in (('Active', active_rows), ('Approved', completed_rows)):
             for record in source_rows:
-                if not is_global and record.get('Branch') != requested_branch:
-                    continue
-                if is_global and requested_branch and record.get('Branch') != requested_branch:
+                if not _is_selected_branch_(
+                    record, requested_branch_keys, require_branch=not is_global
+                ):
                     continue
                 if not _in_date_range(record, params.get('dateFrom'), params.get('dateTo')):
                     continue

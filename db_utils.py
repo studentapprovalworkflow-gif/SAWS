@@ -322,6 +322,14 @@ def query_sheet_page_(
         elif operator == 'distinct':
             where.append("data->>%s IS DISTINCT FROM %s")
             where_params.extend((field, value))
+        elif operator == 'in':
+            values = list(value)
+            if not values:
+                where.append('FALSE')
+            else:
+                placeholders = ', '.join(['%s'] * len(values))
+                where.append(f"data->>%s IN ({placeholders})")
+                where_params.extend((field, *values))
         elif operator == 'contains':
             where.append("POSITION(%s IN LOWER(COALESCE(data->>%s, ''))) > 0")
             where_params.extend((str(value).lower(), field))
@@ -395,6 +403,30 @@ def query_sheet_page_(
     return {'total': int(stats['total']), 'rows': rows}
 
 
+def selection_values_(params, plural_key, singular_key):
+    """Read a multi-select filter, retaining support for older scalar callers."""
+    raw = params.get(plural_key)
+    if raw is None:
+        raw = params.get(singular_key)
+    if raw is None or raw == '':
+        return []
+    if isinstance(raw, str):
+        values = [raw]
+    elif isinstance(raw, (list, tuple)):
+        values = raw
+    else:
+        raise ValueError(f'Invalid selection filter: {plural_key}')
+
+    selected = []
+    for value in values:
+        if not isinstance(value, str):
+            raise ValueError(f'Invalid selection value: {plural_key}')
+        value = value.strip()
+        if value and value not in selected:
+            selected.append(value)
+    return selected
+
+
 def query_workflow_page_(
     name,
     user,
@@ -409,8 +441,10 @@ def query_workflow_page_(
     filters = []
     if user.get('role') not in config.GLOBAL_VISIBILITY_ROLES:
         filters.append(('Branch', 'eq', user.get('branch') or ''))
-    elif params.get('branch'):
-        filters.append(('Branch', 'eq', params['branch']))
+    else:
+        branches = selection_values_(params, 'branches', 'branch')
+        if branches:
+            filters.append(('Branch', 'in', branches))
     if params.get('batch'):
         batch = str(params['batch']).strip()
         if batch:

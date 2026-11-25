@@ -48,7 +48,7 @@ import {
   ApiError
 } from '@/lib/apiClient';
 import { useAuth } from '@/context/AuthContext';
-import { BranchFilter, BatchFilter, DEFAULT_PAGE_SIZE } from '@/components/ListControls';
+import { BranchFilter, BatchFilter, MultiSelectFilter, DEFAULT_PAGE_SIZE } from '@/components/ListControls';
 import type { StudentEntry, StudentStatus } from '@/types';
 import { STATUS_LABELS } from '@/types';
 
@@ -179,8 +179,8 @@ export default function Students() {
     searchParams.get('tab') === 'completed' ? 'completed' : 'response'
   );
   const [search, setSearch] = useState(searchParams.get('search') || '');
-  const [statusFilter, setStatusFilter] = useState<string>('');
-  const [branchFilter, setBranchFilter] = useState<string>('');
+  const [statusFilters, setStatusFilters] = useState<string[]>([]);
+  const [branchFilters, setBranchFilters] = useState<string[]>([]);
   const [batchFilter, setBatchFilter] = useState<string>('');
   const [lastPresentFrom, setLastPresentFrom] = useState<string>('');
   const [lastPresentTo, setLastPresentTo] = useState<string>('');
@@ -191,8 +191,8 @@ export default function Students() {
   // real filter state (which actually re-queries) when "Apply filters" is
   // clicked - so opening the panel and closing it without applying is a no-op.
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [draftStatus, setDraftStatus] = useState('');
-  const [draftBranch, setDraftBranch] = useState('');
+  const [draftStatuses, setDraftStatuses] = useState<string[]>([]);
+  const [draftBranches, setDraftBranches] = useState<string[]>([]);
   const [draftBatch, setDraftBatch] = useState('');
   const [draftEntryDateFrom, setDraftEntryDateFrom] = useState('');
   const [draftEntryDateTo, setDraftEntryDateTo] = useState('');
@@ -200,8 +200,8 @@ export default function Students() {
   const [draftLastPresentTo, setDraftLastPresentTo] = useState('');
 
   function openFilters() {
-    setDraftStatus(statusFilter);
-    setDraftBranch(branchFilter);
+    setDraftStatuses(statusFilters);
+    setDraftBranches(branchFilters);
     setDraftBatch(batchFilter);
     setDraftEntryDateFrom(entryDateFrom);
     setDraftEntryDateTo(entryDateTo);
@@ -211,8 +211,8 @@ export default function Students() {
   }
 
   function applyFilters() {
-    setStatusFilter(draftStatus);
-    setBranchFilter(draftBranch);
+    setStatusFilters(draftStatuses);
+    setBranchFilters(draftBranches);
     setBatchFilter(draftBatch);
     setEntryDateFrom(draftEntryDateFrom);
     setEntryDateTo(draftEntryDateTo);
@@ -223,8 +223,8 @@ export default function Students() {
   }
 
   function clearDraftFilters() {
-    setDraftStatus('');
-    setDraftBranch('');
+    setDraftStatuses([]);
+    setDraftBranches([]);
     setDraftBatch('');
     setDraftEntryDateFrom('');
     setDraftEntryDateTo('');
@@ -233,13 +233,13 @@ export default function Students() {
   }
 
   const activeFilterCount = [
-    statusFilter,
-    branchFilter,
-    batchFilter,
-    entryDateFrom,
-    entryDateTo,
-    lastPresentFrom,
-    lastPresentTo
+    statusFilters.length > 0,
+    branchFilters.length > 0,
+    !!batchFilter,
+    !!entryDateFrom,
+    !!entryDateTo,
+    !!lastPresentFrom,
+    !!lastPresentTo
   ].filter(Boolean).length;
 
   const [sortBy, setSortBy] = useState<string>('');
@@ -326,8 +326,8 @@ export default function Students() {
       // all phone numbers server-side (OR, not AND). See note in apiClient.ts -
       // students.list on the backend needs to do the same OR-style match.
       search: search || undefined,
-      status: tab === 'response' ? statusFilter || undefined : undefined,
-      branch: branchFilter || undefined,
+      statuses: tab === 'response' && statusFilters.length ? statusFilters : undefined,
+      branches: branchFilters.length ? branchFilters : undefined,
       batch: batchFilter || undefined,
       // Two distinct date ranges - when the entry was created vs. when
       // the student was last actually present. See StudentListParams.
@@ -344,8 +344,8 @@ export default function Students() {
     [
       tab,
       search,
-      statusFilter,
-      branchFilter,
+      statusFilters,
+      branchFilters,
       batchFilter,
       entryDateFrom,
       entryDateTo,
@@ -424,8 +424,8 @@ export default function Students() {
     try {
       const result = await exportStudents(tab, {
         search: search || undefined,
-        status: tab === 'response' ? statusFilter || undefined : undefined,
-        branch: branchFilter || undefined,
+        statuses: tab === 'response' && statusFilters.length ? statusFilters : undefined,
+        branches: branchFilters.length ? branchFilters : undefined,
         batch: batchFilter || undefined,
         entryDateFrom: tab === 'response' ? entryDateFrom || undefined : undefined,
         entryDateTo: tab === 'response' ? entryDateTo || undefined : undefined,
@@ -487,12 +487,12 @@ export default function Students() {
                     <>
                       Downloads every row matching your current search, status, branch
                       {(entryDateFrom || entryDateTo || lastPresentFrom || lastPresentTo) && ', and date'} filters
-                      {hasFullVisibility && branchFilter ? ` (${branchFilter})` : ''}.
+                      {hasFullVisibility && branchFilters.length ? ` (${branchFilters.join(', ')})` : ''}.
                     </>
                   ) : (
                     <>
                       Downloads every row matching your current search and branch filter
-                      {hasFullVisibility && branchFilter ? ` (${branchFilter})` : ''}.
+                      {hasFullVisibility && branchFilters.length ? ` (${branchFilters.join(', ')})` : ''}.
                     </>
                   )}
                 </p>
@@ -565,9 +565,9 @@ export default function Students() {
 
         {tab === 'completed' && hasFullVisibility && (
           <BranchFilter
-            value={branchFilter}
-            onChange={(b) => {
-              setBranchFilter(b);
+            value={branchFilters}
+            onChange={(branches) => {
+              setBranchFilters(branches);
               setPage(1);
             }}
             branches={branchesQuery.data || []}
@@ -584,12 +584,12 @@ export default function Students() {
           />
         )}
 
-        {(search || (tab === 'response' ? activeFilterCount > 0 : !!branchFilter || !!batchFilter)) && (
+        {(search || (tab === 'response' ? activeFilterCount > 0 : branchFilters.length > 0 || !!batchFilter)) && (
           <button
             onClick={() => {
               setSearch('');
-              setStatusFilter('');
-              setBranchFilter('');
+              setStatusFilters([]);
+              setBranchFilters([]);
               setBatchFilter('');
               setEntryDateFrom('');
               setEntryDateTo('');
@@ -638,35 +638,25 @@ export default function Students() {
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
             <div>
               <label className="block text-xs font-medium text-ink-700/70 mb-1.5">Status</label>
-              <select
-                value={draftStatus}
-                onChange={(e) => setDraftStatus(e.target.value)}
-                className="w-full rounded-md border border-ink-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ink-900"
-              >
-                <option value="">All statuses</option>
-                {Object.entries(STATUS_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+              <MultiSelectFilter
+                value={draftStatuses}
+                onChange={setDraftStatuses}
+                options={Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label }))}
+                allLabel="All statuses"
+                className="w-full"
+              />
             </div>
 
             {hasFullVisibility && (
               <div>
                 <label className="block text-xs font-medium text-ink-700/70 mb-1.5">Branch</label>
-                <select
-                  value={draftBranch}
-                  onChange={(e) => setDraftBranch(e.target.value)}
-                  className="w-full rounded-md border border-ink-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ink-900"
-                >
-                  <option value="">All branches</option>
-                  {(branchesQuery.data || []).map((b) => (
-                    <option key={b} value={b}>
-                      {b}
-                    </option>
-                  ))}
-                </select>
+                <MultiSelectFilter
+                  value={draftBranches}
+                  onChange={setDraftBranches}
+                  options={(branchesQuery.data || []).map((branch) => ({ value: branch, label: branch }))}
+                  allLabel="All branches"
+                  className="w-full"
+                />
               </div>
             )}
 
