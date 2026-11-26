@@ -21,8 +21,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import BulkTaskTray from '@/components/BulkTaskTray';
-import { listInactive, listStudents, listTransfer } from '@/lib/apiClient';
-import { DEFAULT_PAGE_SIZE } from '@/components/ListControls';
+import { callApi } from '@/lib/apiClient';
+import type { DashboardData } from '@/types';
 
 type NavItem = {
   to: string;
@@ -36,14 +36,6 @@ type ActiveCounts = {
   inactive: number;
   transfer: number;
 };
-
-type AwaitingActionRow = {
-  'Awaiting My Action'?: boolean;
-};
-
-function countAwaitingAction(rows: AwaitingActionRow[] | undefined) {
-  return rows?.filter((row) => row['Awaiting My Action']).length ?? 0;
-}
 
 type ThemeTransitionDocument = Document & {
   startViewTransition?: (callback: () => void) => { finished: Promise<void> };
@@ -276,27 +268,17 @@ export default function AppLayout() {
   const canManageSystemLinks = user?.role === 'Admin';
   const hasAdminSection = canManageUsers || canManageBranches || canAccessData;
 
-  // Sidebar badges count the row-level flags in these already-fetched pages.
-  const pendingRowsParams = { page: 1, pageSize: DEFAULT_PAGE_SIZE };
-  const discontinueRowsQuery = useQuery({
-    queryKey: ['students', 'response', pendingRowsParams],
-    queryFn: () => listStudents('response', pendingRowsParams),
+  const hasFullVisibility = user?.role === 'Admin' || user?.role === 'Head Office';
+  const dashboardQuery = useQuery({
+    queryKey: ['dashboard', hasFullVisibility ? [] : user?.branch, '', '', []],
+    queryFn: () => callApi<DashboardData>('dashboard.get'),
     enabled: !!user
   });
-  const inactiveRowsQuery = useQuery({
-    queryKey: ['inactive', 'active', pendingRowsParams],
-    queryFn: () => listInactive('response', pendingRowsParams),
-    enabled: !!user
-  });
-  const transferRowsQuery = useQuery({
-    queryKey: ['transfer', 'active', pendingRowsParams],
-    queryFn: () => listTransfer('response', pendingRowsParams),
-    enabled: !!user
-  });
+  const workflowPendingCounts = dashboardQuery.data?.charts.workflowComparison ?? [];
   const activeCounts: ActiveCounts = {
-    discontinue: countAwaitingAction(discontinueRowsQuery.data?.rows),
-    inactive: countAwaitingAction(inactiveRowsQuery.data?.rows),
-    transfer: countAwaitingAction(transferRowsQuery.data?.rows)
+    discontinue: workflowPendingCounts.find((workflow) => workflow.workflow === 'Discontinue')?.pending ?? 0,
+    inactive: workflowPendingCounts.find((workflow) => workflow.workflow === 'Inactive')?.pending ?? 0,
+    transfer: workflowPendingCounts.find((workflow) => workflow.workflow === 'Transfer')?.pending ?? 0
   };
 
   const pageTitle =
@@ -414,6 +396,16 @@ export default function AppLayout() {
             </div>
           )}
         </nav>
+        <div className="shrink-0 px-3 py-4 text-left">
+          <div className="dark:opacity-40">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-700/40">
+              DATA ANALYST TEAM
+            </p>
+            <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-ink-700/40">
+              MAGNUS
+            </p>
+          </div>
+        </div>
       </aside>
 
       {/* Right column: top bar + page content. h-full keeps this column
